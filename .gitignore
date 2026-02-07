@@ -1,0 +1,22 @@
+# Swift
+swift/.build/
+swift/.swiftpm/
+
+# TypeScript
+build/
+node_modules/
+
+# macOS
+.DS_Store
+
+# Environment
+.env*
+.mcp.json
+
+# IDE
+.vscode/
+.idea/
+
+# Personal/local files
+CONTINUITY.md
+apple-eventkit-mcp-plan-personal.md

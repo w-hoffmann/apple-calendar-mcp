@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "apple-calendar": {
+      "command": "node",
+      "args": ["/FULL/PATH/TO/apple-calendar-mcp/build/index.js"],
+      "env": {
+        "APPLE_BRIDGE_BIN": "/FULL/PATH/TO/apple-calendar-mcp/swift/.build/release/apple-bridge"
+      }
+    }
+  }
+}
