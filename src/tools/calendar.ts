@@ -92,11 +92,11 @@ export function registerCalendarTools(
       try {
         const now = new Date();
         const startDate =
-          args.startDate ?? new Date(now.setHours(0, 0, 0, 0)).toISOString();
+          args.startDate ?? new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
         const endDate =
           args.endDate ??
           new Date(
-            now.getTime() + 30 * 24 * 60 * 60 * 1000
+            Date.now() + 30 * 24 * 60 * 60 * 1000
           ).toISOString();
 
         const events = await bridge.events({ startDate, endDate });

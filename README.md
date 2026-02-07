@@ -25,7 +25,28 @@ Claude Code ──stdio JSON-RPC──▶ TypeScript MCP Server ──execa─�
 
 ## Installation
 
-### 1. Clone and build
+### Option 1: npm (recommended)
+
+```bash
+claude mcp add --scope user apple-calendar -- npx apple-calendar-mcp
+```
+
+This will automatically download the package, compile the Swift bridge, and register the MCP server. Requires macOS with Xcode or Swift toolchain installed.
+
+After installation, grant calendar access:
+
+```bash
+npx apple-calendar-mcp doctor
+```
+
+Grant **Full Access** when prompted. If access was previously denied:
+
+```bash
+tccutil reset Calendar
+npx apple-calendar-mcp doctor
+```
+
+### Option 2: From source
 
 ```bash
 git clone https://github.com/EgorKurito/apple-calendar-mcp.git
@@ -33,30 +54,15 @@ cd apple-calendar-mcp
 ./scripts/build.sh
 ```
 
-### 2. Grant calendar access
-
-The first run triggers a macOS permission prompt:
+Grant calendar access:
 
 ```bash
 swift/.build/release/apple-bridge doctor
 ```
 
-Grant **Full Access** when prompted. If access was previously denied:
+Connect to Claude Code using one of these methods:
 
-```bash
-tccutil reset Calendar
-swift/.build/release/apple-bridge doctor
-```
-
-### 3. Connect to Claude Code
-
-**Option A: npx (easiest)**
-
-```bash
-claude mcp add --scope user apple-calendar -- npx apple-calendar-mcp
-```
-
-**Option B: Project-level `.mcp.json`**
+**Project-level `.mcp.json`**
 
 Copy `.mcp.json.example` to `.mcp.json` in your project and update paths:
 
@@ -74,7 +80,7 @@ Copy `.mcp.json.example` to `.mcp.json` in your project and update paths:
 }
 ```
 
-**Option C: User-level CLI registration (from source)**
+**User-level CLI registration**
 
 ```bash
 claude mcp add --scope user apple-calendar \

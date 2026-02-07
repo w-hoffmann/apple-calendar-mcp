@@ -65,7 +65,14 @@ export class SwiftBridge {
       );
     }
 
-    const output: BridgeOutput<T> = JSON.parse(result.stdout);
+    let output: BridgeOutput<T>;
+    try {
+      output = JSON.parse(result.stdout);
+    } catch {
+      throw new Error(
+        `Failed to parse apple-bridge output: ${result.stdout.slice(0, 500)}`
+      );
+    }
 
     if (output.status === "error") {
       throw new Error(output.error ?? "Unknown bridge error");

@@ -1,6 +1,6 @@
 {
   "name": "apple-calendar-mcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "MCP server for Apple Calendar via native EventKit API with proper recurring event support",
   "type": "module",
   "main": "build/index.js",
@@ -18,7 +18,15 @@
     "postinstall": "./scripts/postinstall.sh",
     "prepublishOnly": "npm run build"
   },
-  "keywords": ["mcp", "apple", "calendar", "eventkit", "model-context-protocol", "claude", "macos"],
+  "keywords": [
+    "mcp",
+    "apple",
+    "calendar",
+    "eventkit",
+    "model-context-protocol",
+    "claude",
+    "macos"
+  ],
   "author": "Egor Kurito",
   "license": "MIT",
   "repository": {
@@ -29,6 +37,9 @@
   "bugs": {
     "url": "https://github.com/EgorKurito/apple-calendar-mcp/issues"
   },
+  "os": [
+    "darwin"
+  ],
   "engines": {
     "node": ">=20.0.0"
   },
