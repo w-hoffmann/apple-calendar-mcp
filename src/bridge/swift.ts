@@ -1,4 +1,6 @@
 import { execa } from "execa";
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
 
 // Mirror of Swift models
 
@@ -45,14 +47,10 @@ export class SwiftBridge {
   private binPath: string;
 
   constructor() {
-    const envPath = process.env.APPLE_BRIDGE_BIN;
-    if (!envPath) {
-      throw new Error(
-        "APPLE_BRIDGE_BIN environment variable is not set. " +
-          "Set it to the path of the apple-bridge binary."
-      );
-    }
-    this.binPath = envPath;
+    const __dirname = dirname(fileURLToPath(import.meta.url));
+    this.binPath =
+      process.env.APPLE_BRIDGE_BIN ??
+      join(__dirname, "..", "swift", ".build", "release", "apple-bridge");
   }
 
   private async exec<T>(args: string[]): Promise<T> {

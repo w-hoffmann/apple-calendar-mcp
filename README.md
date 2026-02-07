@@ -50,7 +50,13 @@ swift/.build/release/apple-bridge doctor
 
 ### 3. Connect to Claude Code
 
-**Option A: Project-level `.mcp.json`**
+**Option A: npx (easiest)**
+
+```bash
+claude mcp add --scope user apple-calendar -- npx apple-calendar-mcp
+```
+
+**Option B: Project-level `.mcp.json`**
 
 Copy `.mcp.json.example` to `.mcp.json` in your project and update paths:
 
@@ -68,7 +74,7 @@ Copy `.mcp.json.example` to `.mcp.json` in your project and update paths:
 }
 ```
 
-**Option B: User-level CLI registration**
+**Option C: User-level CLI registration (from source)**
 
 ```bash
 claude mcp add --scope user apple-calendar \
