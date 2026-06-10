@@ -38,7 +38,7 @@ Claude Code ──stdio JSON-RPC──▶ TypeScript MCP Server ──execa─�
 **TypeScript layer** (`src/`):
 - `index.ts` — McpServer with StdioServerTransport, reads `APPLE_BRIDGE_BIN` env var
 - `bridge/swift.ts` — SwiftBridge class: calls binary via execa, parses JSON envelope `{status, data, error}`, 30s timeout
-- `tools/calendar.ts` — 6 MCP tools with Zod validation: get_calendars, get_events, get_today_events, search_events, create_event, delete_event
+- `tools/calendar.ts` — 6 MCP tools with Zod validation: get_calendars, get_events, get_today_events, search_events, create_event, update_event (delete_event removed for safety; updates preserve event IDs and invitations)
 
 **Swift layer** (`swift/Sources/AppleBridge/`):
 - `main.swift` — ArgumentParser CLI with 6 subcommands (mirrors MCP tools)

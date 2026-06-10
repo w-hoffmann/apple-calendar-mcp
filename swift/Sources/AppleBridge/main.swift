@@ -13,7 +13,7 @@ struct AppleBridge: ParsableCommand {
             Events.self,
             Today.self,
             CreateEvent.self,
-            DeleteEvent.self,
+            UpdateEvent.self,
         ]
     )
 }
@@ -155,31 +155,78 @@ struct CreateEvent: ParsableCommand {
     }
 }
 
-// MARK: - Delete Event
+// MARK: - Update Event
 
-struct DeleteEvent: ParsableCommand {
+struct UpdateEvent: ParsableCommand {
     static let configuration = CommandConfiguration(
-        commandName: "delete-event",
-        abstract: "Delete an event"
+        commandName: "update-event",
+        abstract: "Update an existing event"
     )
 
     @Option(help: "Event ID")
     var id: String
 
-    @Option(help: "Span: this or all")
+    @Option(help: "Span: this or future (default: this)")
     var span: String = "this"
 
     @Option(help: "Occurrence date for recurring events (ISO8601)")
     var occurrence: String?
 
+    @Option(help: "New title")
+    var title: String?
+
+    @Option(help: "New start date (ISO8601)")
+    var start: String?
+
+    @Option(help: "New end date (ISO8601)")
+    var end: String?
+
+    @Option(name: .customLong("time-zone"), help: "New time zone identifier")
+    var timeZone: String?
+
+    @Flag(name: .customLong("all-day"), help: "Mark as all-day event")
+    var allDay: Bool = false
+
+    @Flag(name: .customLong("no-all-day"), help: "Mark as non-all-day event")
+    var noAllDay: Bool = false
+
+    @Option(help: "New location")
+    var location: String?
+
+    @Option(help: "New notes")
+    var notes: String?
+
+    @Option(name: .customLong("calendar-id"), help: "Move event to calendar with this ID")
+    var calendarId: String?
+
     func run() {
         let service = CalendarService()
         do {
             try service.requestAccess()
-            let ekSpan: EKSpan = span == "all" ? .futureEvents : .thisEvent
+            let ekSpan: EKSpan = span == "future" ? .futureEvents : .thisEvent
             let occDate = try occurrence.map { try parseISO8601($0) }
-            try service.deleteEvent(eventId: id, span: ekSpan, occurrenceDate: occDate)
-            printJSON(BridgeOutput.success("Event deleted"))
+            let startDate = try start.map { try parseISO8601($0) }
+            let endDate = try end.map { try parseISO8601($0) }
+
+            let isAllDayOpt: Bool?
+            if allDay { isAllDayOpt = true }
+            else if noAllDay { isAllDayOpt = false }
+            else { isAllDayOpt = nil }
+
+            let event = try service.updateEvent(
+                eventId: id,
+                span: ekSpan,
+                occurrenceDate: occDate,
+                title: title,
+                startDate: startDate,
+                endDate: endDate,
+                timeZone: timeZone,
+                isAllDay: isAllDayOpt,
+                location: location,
+                notes: notes,
+                calendarId: calendarId
+            )
+            printJSON(BridgeOutput.success(event))
         } catch {
             printError(error.localizedDescription)
         }

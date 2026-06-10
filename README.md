@@ -97,7 +97,7 @@ claude mcp add --scope user apple-calendar \
 | `get_today_events` | Get all of today's events |
 | `search_events` | Search events by title, location, or notes |
 | `create_event` | Create a new calendar event |
-| `delete_event` | Delete an event (single occurrence or all future occurrences) |
+| `update_event` | Update an existing event (reschedule, rename, move between calendars, edit location/notes) |
 
 ## Verification
 

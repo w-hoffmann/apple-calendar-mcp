@@ -137,19 +137,31 @@ export class SwiftBridge {
     return this.exec<EventInfo>(args);
   }
 
-  async deleteEvent(opts: {
+  async updateEvent(opts: {
     eventId: string;
-    span: "this" | "all";
+    span?: "this" | "future";
     occurrenceDate?: string;
-  }): Promise<string> {
-    const args = [
-      "delete-event",
-      "--id",
-      opts.eventId,
-      "--span",
-      opts.span,
-    ];
+    title?: string;
+    startDate?: string;
+    endDate?: string;
+    timeZone?: string;
+    allDay?: boolean;
+    location?: string;
+    notes?: string;
+    calendarId?: string;
+  }): Promise<EventInfo> {
+    const args = ["update-event", "--id", opts.eventId];
+    if (opts.span) args.push("--span", opts.span);
     if (opts.occurrenceDate) args.push("--occurrence", opts.occurrenceDate);
-    return this.exec<string>(args);
+    if (opts.title !== undefined) args.push("--title", opts.title);
+    if (opts.startDate) args.push("--start", opts.startDate);
+    if (opts.endDate) args.push("--end", opts.endDate);
+    if (opts.timeZone) args.push("--time-zone", opts.timeZone);
+    if (opts.allDay === true) args.push("--all-day");
+    if (opts.allDay === false) args.push("--no-all-day");
+    if (opts.location !== undefined) args.push("--location", opts.location);
+    if (opts.notes !== undefined) args.push("--notes", opts.notes);
+    if (opts.calendarId) args.push("--calendar-id", opts.calendarId);
+    return this.exec<EventInfo>(args);
   }
 }

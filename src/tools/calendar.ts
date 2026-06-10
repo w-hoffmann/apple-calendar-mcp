@@ -159,29 +159,51 @@ export function registerCalendarTools(
   );
 
   server.tool(
-    "delete_event",
-    "Delete a calendar event",
+    "update_event",
+    "Update an existing event. Use this to reschedule (change startDate/endDate), rename (change title), move between calendars (change calendarId), or edit location/notes. Only fields you pass are changed; omitted fields are left untouched. The event ID stays the same and existing invitations are preserved.",
     {
       eventId: z.string().describe("Event ID"),
       span: z
-        .enum(["this", "all"])
-        .describe("Delete this occurrence or all future events"),
+        .enum(["this", "future"])
+        .optional()
+        .describe(
+          "For recurring events: 'this' updates only the given occurrence (default), 'future' updates this and all future occurrences"
+        ),
       occurrenceDate: z
         .string()
         .optional()
-        .describe("Occurrence date for recurring events (ISO8601)"),
+        .describe(
+          "Occurrence date for recurring events (ISO8601). Required if you want to target a specific instance of a recurring series"
+        ),
+      title: z.string().optional().describe("New title"),
+      startDate: z.string().optional().describe("New start date (ISO8601)"),
+      endDate: z.string().optional().describe("New end date (ISO8601)"),
+      timeZone: z.string().optional().describe("New time zone identifier"),
+      allDay: z.boolean().optional().describe("Mark as all-day or non-all-day"),
+      location: z.string().optional().describe("New location"),
+      notes: z.string().optional().describe("New notes"),
+      calendarId: z
+        .string()
+        .optional()
+        .describe("Move event to the calendar with this ID"),
     },
     async (args) => {
       try {
-        await bridge.deleteEvent({
+        const event = await bridge.updateEvent({
           eventId: args.eventId,
           span: args.span,
           occurrenceDate: args.occurrenceDate,
+          title: args.title,
+          startDate: args.startDate,
+          endDate: args.endDate,
+          timeZone: args.timeZone,
+          allDay: args.allDay,
+          location: args.location,
+          notes: args.notes,
+          calendarId: args.calendarId,
         });
         return {
-          content: [
-            { type: "text", text: JSON.stringify({ deleted: true }, null, 2) },
-          ],
+          content: [{ type: "text", text: JSON.stringify(event, null, 2) }],
         };
       } catch (e) {
         return {

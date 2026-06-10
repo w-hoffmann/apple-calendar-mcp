@@ -155,17 +155,24 @@ final class CalendarService {
         return eventToInfo(event)
     }
 
-    // MARK: - Delete Event
+    // MARK: - Update Event
 
-    func deleteEvent(
+    func updateEvent(
         eventId: String,
         span: EKSpan,
-        occurrenceDate: Date? = nil
-    ) throws {
+        occurrenceDate: Date? = nil,
+        title: String? = nil,
+        startDate: Date? = nil,
+        endDate: Date? = nil,
+        timeZone: String? = nil,
+        isAllDay: Bool? = nil,
+        location: String? = nil,
+        notes: String? = nil,
+        calendarId: String? = nil
+    ) throws -> EventInfo {
         let event: EKEvent?
 
         if let occ = occurrenceDate {
-            // For recurring events, find the specific occurrence
             let start = occ
             let end = Calendar.current.date(byAdding: .day, value: 1, to: occ)!
             let predicate = store.predicateForEvents(withStart: start, end: end, calendars: nil)
@@ -179,7 +186,27 @@ final class CalendarService {
             throw BridgeError.eventNotFound(eventId)
         }
 
-        try store.remove(ev, span: span)
+        if let title = title { ev.title = title }
+        if let startDate = startDate { ev.startDate = startDate }
+        if let endDate = endDate { ev.endDate = endDate }
+        if let isAllDay = isAllDay { ev.isAllDay = isAllDay }
+        if let location = location { ev.location = location }
+        if let notes = notes { ev.notes = notes }
+        if let tz = timeZone {
+            guard let zone = TimeZone(identifier: tz) else {
+                throw BridgeError.invalidDate("Invalid time zone identifier: \(tz)")
+            }
+            ev.timeZone = zone
+        }
+        if let calId = calendarId {
+            guard let cal = store.calendar(withIdentifier: calId) else {
+                throw BridgeError.calendarNotFound(calId)
+            }
+            ev.calendar = cal
+        }
+
+        try store.save(ev, span: span)
+        return eventToInfo(ev)
     }
 
     // MARK: - Helpers
