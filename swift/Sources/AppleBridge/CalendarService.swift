@@ -152,6 +152,13 @@ final class CalendarService {
         notes: String? = nil,
         calendarId: String? = nil
     ) throws -> EventInfo {
+        // span 'future' without an occurrenceDate would resolve the series master
+        // and rewrite the whole series. Guard before resolving the event so the
+        // direct-CLI path (apple-bridge update-event --span future) is covered too.
+        if occurrenceDate == nil && span == .futureEvents {
+            throw BridgeError.spanFutureRequiresOccurrenceDate
+        }
+
         let event: EKEvent?
 
         if let occ = occurrenceDate {
@@ -159,13 +166,58 @@ final class CalendarService {
             let end = Calendar.current.date(byAdding: .day, value: 1, to: occ)!
             let predicate = store.predicateForEvents(withStart: start, end: end, calendars: nil)
             let events = store.events(matching: predicate)
-            event = events.first { $0.eventIdentifier == eventId || $0.calendarItemExternalIdentifier == eventId }
+            // Match on EKEvent.occurrenceDate (the stable original series slot that
+            // get_events emits), not startDate — a detached/moved occurrence's
+            // startDate has diverged while its occurrenceDate stays pinned. The 1 ms
+            // tolerance absorbs the millisecond quantization of the re-serialized
+            // value while staying far below any real occurrence spacing. All-day
+            // occurrences match on the same midnight instant.
+            // occurrenceDate is a `null_unspecified Date!` (IUO); it is reliably
+            // non-nil for store-predicate results (they always carry a startDate),
+            // but we bind it defensively rather than force-unwrap.
+            let matched = events.first {
+                guard let od = $0.occurrenceDate else { return false }
+                return abs(od.timeIntervalSince(occ)) < 0.001
+                    && ($0.eventIdentifier == eventId || $0.calendarItemExternalIdentifier == eventId)
+            }
+            if let matched = matched {
+                event = matched
+            } else {
+                // No instance matched the supplied occurrenceDate. If the target series
+                // is recurring, surface a descriptive, recoverable error instead of a
+                // bare eventNotFound. Determine recurrence three ways: (1) the window
+                // results by either id form (honors callers who passed
+                // calendarItemExternalIdentifier); (2) the canonical-id lookup
+                // (store.event(withIdentifier:) does not resolve external ids); and
+                // (3) an external-id lookup (store.calendarItems(withExternalIdentifier:)),
+                // which keeps the descriptive error reachable for an external-id caller
+                // whose occurrence has moved outside the day window.
+                let isRecurring =
+                    events.first {
+                        $0.eventIdentifier == eventId || $0.calendarItemExternalIdentifier == eventId
+                    }?.hasRecurrenceRules == true
+                    || store.event(withIdentifier: eventId)?.hasRecurrenceRules == true
+                    || store.calendarItems(withExternalIdentifier: eventId)
+                        .contains { ($0 as? EKEvent)?.hasRecurrenceRules == true }
+                if isRecurring {
+                    throw BridgeError.occurrenceNotFound(formatISO8601(occ))
+                }
+                event = nil
+            }
         } else {
             event = store.event(withIdentifier: eventId)
         }
 
         guard let ev = event else {
             throw BridgeError.eventNotFound(eventId)
+        }
+
+        // A recurring series targeted without occurrenceDate resolves to the series
+        // master here; editing it would silently change the first occurrence (span
+        // 'this') instead of the intended instance. Refuse and tell the caller what
+        // to pass. Only reachable in the occurrenceDate == nil branch.
+        if ev.hasRecurrenceRules && occurrenceDate == nil {
+            throw BridgeError.recurringRequiresOccurrenceDate
         }
 
         if let title = title {
@@ -216,7 +268,9 @@ final class CalendarService {
             timeZone: event.timeZone?.identifier,
             isAllDay: event.isAllDay,
             hasRecurrenceRules: event.hasRecurrenceRules,
-            occurrenceDate: formatISO8601(event.occurrenceDate),
+            // occurrenceDate is a `null_unspecified Date!` (IUO); map over it instead
+            // of force-unwrapping so a nil slot serializes as null rather than trapping.
+            occurrenceDate: event.occurrenceDate.map(formatISO8601),
             isDetached: event.isDetached,
             location: event.location,
             notes: event.notes

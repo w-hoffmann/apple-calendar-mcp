@@ -63,7 +63,7 @@ export const updateEventInput = {
     .string()
     .optional()
     .describe(
-      "Occurrence date for recurring events (ISO8601). Required if you want to target a specific instance of a recurring series"
+      "Identifies which occurrence of a recurring series to update: pass the target instance's occurrenceDate value from get_events (its original series slot) — NOT the desired new start time. Required for any recurring target and for span: 'future'. The bridge matches it within a ~1 ms tolerance, so pass the value through verbatim."
     ),
   title: z.string().min(1).optional().describe("New title"),
   startDate: z.string().optional().describe("New start date (ISO8601)"),
@@ -77,6 +77,30 @@ export const updateEventInput = {
     .optional()
     .describe("Move event to the calendar with this ID"),
 };
+
+// Cross-field validation for update_event: `span: "future"` requires
+// `occurrenceDate`. This refine is enforced in the tool HANDLER (see registration
+// below), not via `inputSchema` — the pinned @modelcontextprotocol/sdk 1.26.0
+// advertises a tool's input JSON Schema by reading `.shape`, which a ZodEffects
+// (.superRefine) does not expose, so passing this schema as `inputSchema` would
+// advertise an EMPTY schema (no eventId/occurrenceDate/field docs). The tool is
+// therefore registered with the raw `updateEventInput` shape (full discoverability)
+// and we run this refine in the handler. `updateEventInput` stays the raw shape
+// (other tools / unit tests build `z.object(updateEventInput)`). The
+// recurring-without-occurrenceDate (span "this"/default) case is enforced in the
+// Swift bridge, which is authoritative and CLI-callable.
+export const updateEventSchema = z
+  .object(updateEventInput)
+  .superRefine((val, ctx) => {
+    if (val.span === "future" && val.occurrenceDate === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'occurrenceDate is required for span: "future" (set it to the starting occurrence\'s occurrenceDate value from get_events).',
+        path: ["occurrenceDate"],
+      });
+    }
+  });
 
 // --- Tool registration ----------------------------------------------------
 
@@ -173,12 +197,24 @@ export function registerCalendarTools(
     {
       title: "Update event",
       description:
-        "Update an existing event. Use this to reschedule (change startDate/endDate), rename (change title), move between calendars (change calendarId), or edit location/notes. Only fields you pass are changed; omitted fields are left untouched. The event ID stays the same and existing invitations are preserved. Rejects empty titles, an inverted date range (start after end), an invalid time zone, and an unknown span.",
+        "Update an existing event. Use this to reschedule (change startDate/endDate), rename (change title), move between calendars (change calendarId), or edit location/notes. Only fields you pass are changed; omitted fields are left untouched. The event ID stays the same and existing invitations are preserved. For a recurring event you MUST pass occurrenceDate (the target instance's occurrenceDate value from get_events) to select which occurrence to change; updating a recurring event without it is rejected. span: 'future' also requires occurrenceDate. Rejects empty titles, an inverted date range (start after end), an invalid time zone, and an unknown span.",
+      // Raw shape (not updateEventSchema) so the SDK advertises all properties +
+      // descriptions; the cross-field refine runs in the handler below.
       inputSchema: updateEventInput,
     },
     async (args) =>
-      wrap(() =>
-        bridge.updateEvent({
+      wrap(() => {
+        // Enforce updateEventSchema's refine (span: "future" ⇒ occurrenceDate) here,
+        // since the advertised inputSchema is the un-refined raw shape. Single source
+        // of truth for the rule, so sibling-change refinements merged into
+        // updateEventSchema apply automatically.
+        const parsed = updateEventSchema.safeParse(args);
+        if (!parsed.success) {
+          throw new Error(
+            parsed.error.issues[0]?.message ?? "Invalid update_event arguments"
+          );
+        }
+        return bridge.updateEvent({
           eventId: args.eventId,
           span: args.span,
           occurrenceDate: args.occurrenceDate,
@@ -190,7 +226,7 @@ export function registerCalendarTools(
           location: args.location,
           notes: args.notes,
           calendarId: args.calendarId,
-        })
-      )
+        });
+      })
   );
 }

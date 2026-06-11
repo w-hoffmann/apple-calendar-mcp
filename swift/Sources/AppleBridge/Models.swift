@@ -64,6 +64,9 @@ enum BridgeError: Error, LocalizedError, CustomStringConvertible {
     case invalidDate(String)
     case invalidTimeZone(String)
     case invalidInput(String)
+    case recurringRequiresOccurrenceDate
+    case spanFutureRequiresOccurrenceDate
+    case occurrenceNotFound(String)
 
     var errorDescription: String? { description }
 
@@ -81,6 +84,12 @@ enum BridgeError: Error, LocalizedError, CustomStringConvertible {
             return "Invalid time zone: \(id)"
         case .invalidInput(let message):
             return message
+        case .recurringRequiresOccurrenceDate:
+            return "This is a recurring event. Pass occurrenceDate set to the target instance's occurrenceDate value from get_events to choose which occurrence to update, instead of editing the whole series."
+        case .spanFutureRequiresOccurrenceDate:
+            return "span 'future' requires occurrenceDate. Pass occurrenceDate set to the starting instance's occurrenceDate value from get_events so the change applies from that occurrence forward."
+        case .occurrenceNotFound(let value):
+            return "No occurrence of this recurring event matches occurrenceDate \(value). Pass the exact value returned by get_events.occurrenceDate for the instance you want to update."
         }
     }
 }
