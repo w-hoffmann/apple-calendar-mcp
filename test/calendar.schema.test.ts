@@ -5,6 +5,7 @@ import {
   updateEventInput,
   updateEventSchema,
   registerCalendarTools,
+  getDefaultSearchWindow,
 } from "../build/tools/calendar.js";
 
 const createSchema = z.object(createEventInput);
@@ -100,6 +101,34 @@ describe("update_event refined schema (span/occurrenceDate)", () => {
 // (.superRefine) schema as inputSchema would advertise an EMPTY schema under the
 // pinned MCP SDK (it reads `.shape`, which a ZodEffects lacks) — so the tool is
 // registered with the raw shape and the refine runs in the handler.
+// Regression: the default search window must start at LOCAL midnight of the
+// current day (not UTC midnight, not "now"). `getDefaultSearchWindow` is the
+// single source of truth for this; these assertions are time-zone-agnostic
+// because `Date#getHours/getMinutes/getSeconds` read back in the host's local
+// zone — local midnight reads as 00:00:00 regardless of the host's UTC offset.
+describe("getDefaultSearchWindow", () => {
+  it("starts at local midnight of the current day", () => {
+    const { startDate } = getDefaultSearchWindow();
+    const start = new Date(startDate);
+    expect(start.getHours()).toBe(0);
+    expect(start.getMinutes()).toBe(0);
+    expect(start.getSeconds()).toBe(0);
+    expect(start.getMilliseconds()).toBe(0);
+    expect(start.getDate()).toBe(new Date().getDate());
+  });
+
+  it("ends ~30 days from now", () => {
+    const { startDate, endDate } = getDefaultSearchWindow();
+    const spanDays =
+      (new Date(endDate).getTime() - new Date(startDate).getTime()) /
+      (24 * 60 * 60 * 1000);
+    // start is today's local midnight, end is now+30d, so the span is in
+    // [30, 31) days; assert a tolerant band rather than an exact value.
+    expect(spanDays).toBeGreaterThanOrEqual(30);
+    expect(spanDays).toBeLessThan(31);
+  });
+});
+
 describe("update_event tool registration", () => {
   function register() {
     const tools = {};
@@ -140,5 +169,36 @@ describe("update_event tool registration", () => {
     const r = await tools.update_event.handler({ eventId: "E", span: "this" });
     expect(r.isError).toBeFalsy();
     expect(getLastBridgeCall()?.eventId).toBe("E");
+  });
+});
+
+// Regression: the search_events tool and its `query` parameter must advertise
+// that matching covers title, location, AND notes (not title alone), so the
+// client can discover that a location/notes substring is searchable.
+describe("search_events advertises all matched fields", () => {
+  function registerTools() {
+    const tools = {};
+    const fakeServer = {
+      registerTool: (name, config, handler) => {
+        tools[name] = { config, handler };
+      },
+    };
+    registerCalendarTools(fakeServer, {});
+    return tools;
+  }
+
+  it("tool description names title, location, and notes", () => {
+    const desc = registerTools().search_events.config.description.toLowerCase();
+    expect(desc).toContain("title");
+    expect(desc).toContain("location");
+    expect(desc).toContain("notes");
+  });
+
+  it("query parameter description names title, location, and notes", () => {
+    const shape = registerTools().search_events.config.inputSchema;
+    const queryDesc = shape.query.description?.toLowerCase() ?? "";
+    expect(queryDesc).toContain("title");
+    expect(queryDesc).toContain("location");
+    expect(queryDesc).toContain("notes");
   });
 });

@@ -7,5 +7,10 @@ export default defineConfig({
   test: {
     include: ["test/**/*.test.ts"],
     environment: "node",
+    // Pin a non-UTC zone with a stable offset so the local-midnight regression
+    // guard in getDefaultSearchWindow actually exercises the UTC-offset path.
+    // On a UTC host (e.g. GitHub's macos runners) local midnight == UTC midnight,
+    // which would silently hide a regressive UTC-midnight "simplification".
+    env: { TZ: "America/New_York" },
   },
 });

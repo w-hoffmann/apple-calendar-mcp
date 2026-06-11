@@ -29,7 +29,11 @@ export const getEventsInput = {
 };
 
 export const searchEventsInput = {
-  query: z.string().describe("Search query to match event titles"),
+  query: z
+    .string()
+    .describe(
+      "Search query matched case-insensitively against event title, location, and notes"
+    ),
   startDate: z
     .string()
     .optional()
@@ -102,6 +106,34 @@ export const updateEventSchema = z
     }
   });
 
+// --- Default search window (exported for unit tests) ----------------------
+
+/**
+ * Default window for `search_events` when no dates are given: from the start of
+ * the current day in the host's LOCAL time zone through 30 days from now.
+ *
+ * `new Date(y, m, d)` builds the instant from LOCAL date components, so it is
+ * exactly local midnight; `.toISOString()` renders that same instant in UTC
+ * (e.g. local 00:00 in CEST -> "...T22:00:00.000Z"). This is correct — do NOT
+ * "simplify" to UTC midnight (`setUTCHours(0, 0, 0, 0)` or `new Date("YYYY-MM-DD")`),
+ * which lands on local 02:00 in CEST and would miss early-morning events.
+ */
+export function getDefaultSearchWindow(): {
+  startDate: string;
+  endDate: string;
+} {
+  const now = new Date();
+  const startDate = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate()
+  ).toISOString();
+  const endDate = new Date(
+    now.getTime() + 30 * 24 * 60 * 60 * 1000
+  ).toISOString();
+  return { startDate, endDate };
+}
+
 // --- Tool registration ----------------------------------------------------
 
 export function registerCalendarTools(
@@ -142,22 +174,15 @@ export function registerCalendarTools(
     "search_events",
     {
       title: "Search events",
-      description: "Search events by title (client-side filtering)",
+      description:
+        "Search events by title, location, or notes (client-side substring filtering)",
       inputSchema: searchEventsInput,
     },
     async (args) =>
       wrap(async () => {
-        const now = new Date();
-        const startDate =
-          args.startDate ??
-          new Date(
-            now.getFullYear(),
-            now.getMonth(),
-            now.getDate()
-          ).toISOString();
-        const endDate =
-          args.endDate ??
-          new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+        const def = getDefaultSearchWindow();
+        const startDate = args.startDate ?? def.startDate;
+        const endDate = args.endDate ?? def.endDate;
 
         const events = await bridge.events({ startDate, endDate });
         const query = args.query.toLowerCase();
