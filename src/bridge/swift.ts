@@ -43,6 +43,82 @@ interface BridgeOutput<T> {
   error?: string;
 }
 
+export interface EventsOpts {
+  startDate: string;
+  endDate: string;
+  calendars?: string[];
+  calendarIds?: string[];
+}
+
+export interface CreateEventOpts {
+  calendarId: string;
+  title: string;
+  startDate: string;
+  endDate: string;
+  timeZone?: string;
+  allDay?: boolean;
+  location?: string;
+  notes?: string;
+}
+
+export interface UpdateEventOpts {
+  eventId: string;
+  span?: "this" | "future";
+  occurrenceDate?: string;
+  title?: string;
+  startDate?: string;
+  endDate?: string;
+  timeZone?: string;
+  allDay?: boolean;
+  location?: string;
+  notes?: string;
+  calendarId?: string;
+}
+
+// --- Pure CLI argument builders (exported for unit tests) -----------------
+
+export function buildEventsArgs(opts: EventsOpts): string[] {
+  const args = ["events", "--start", opts.startDate, "--end", opts.endDate];
+  if (opts.calendars?.length) args.push("--calendars", ...opts.calendars);
+  if (opts.calendarIds?.length) args.push("--calendar-ids", ...opts.calendarIds);
+  return args;
+}
+
+export function buildCreateArgs(opts: CreateEventOpts): string[] {
+  const args = [
+    "create-event",
+    "--calendar-id",
+    opts.calendarId,
+    "--title",
+    opts.title,
+    "--start",
+    opts.startDate,
+    "--end",
+    opts.endDate,
+  ];
+  if (opts.timeZone) args.push("--time-zone", opts.timeZone);
+  if (opts.allDay) args.push("--all-day");
+  if (opts.location) args.push("--location", opts.location);
+  if (opts.notes) args.push("--notes", opts.notes);
+  return args;
+}
+
+export function buildUpdateArgs(opts: UpdateEventOpts): string[] {
+  const args = ["update-event", "--id", opts.eventId];
+  if (opts.span) args.push("--span", opts.span);
+  if (opts.occurrenceDate) args.push("--occurrence", opts.occurrenceDate);
+  if (opts.title !== undefined) args.push("--title", opts.title);
+  if (opts.startDate) args.push("--start", opts.startDate);
+  if (opts.endDate) args.push("--end", opts.endDate);
+  if (opts.timeZone) args.push("--time-zone", opts.timeZone);
+  if (opts.allDay === true) args.push("--all-day");
+  if (opts.allDay === false) args.push("--no-all-day");
+  if (opts.location !== undefined) args.push("--location", opts.location);
+  if (opts.notes !== undefined) args.push("--notes", opts.notes);
+  if (opts.calendarId) args.push("--calendar-id", opts.calendarId);
+  return args;
+}
+
 export class SwiftBridge {
   private binPath: string;
 
@@ -89,79 +165,19 @@ export class SwiftBridge {
     return this.exec<CalendarInfo[]>(["calendars"]);
   }
 
-  async events(opts: {
-    startDate: string;
-    endDate: string;
-    calendars?: string[];
-    calendarIds?: string[];
-  }): Promise<EventInfo[]> {
-    const args = ["events", "--start", opts.startDate, "--end", opts.endDate];
-    if (opts.calendars?.length) {
-      args.push("--calendars", ...opts.calendars);
-    }
-    if (opts.calendarIds?.length) {
-      args.push("--calendar-ids", ...opts.calendarIds);
-    }
-    return this.exec<EventInfo[]>(args);
+  async events(opts: EventsOpts): Promise<EventInfo[]> {
+    return this.exec<EventInfo[]>(buildEventsArgs(opts));
   }
 
   async today(): Promise<EventInfo[]> {
     return this.exec<EventInfo[]>(["today"]);
   }
 
-  async createEvent(opts: {
-    calendarId: string;
-    title: string;
-    startDate: string;
-    endDate: string;
-    timeZone?: string;
-    allDay?: boolean;
-    location?: string;
-    notes?: string;
-  }): Promise<EventInfo> {
-    const args = [
-      "create-event",
-      "--calendar-id",
-      opts.calendarId,
-      "--title",
-      opts.title,
-      "--start",
-      opts.startDate,
-      "--end",
-      opts.endDate,
-    ];
-    if (opts.timeZone) args.push("--time-zone", opts.timeZone);
-    if (opts.allDay) args.push("--all-day");
-    if (opts.location) args.push("--location", opts.location);
-    if (opts.notes) args.push("--notes", opts.notes);
-    return this.exec<EventInfo>(args);
+  async createEvent(opts: CreateEventOpts): Promise<EventInfo> {
+    return this.exec<EventInfo>(buildCreateArgs(opts));
   }
 
-  async updateEvent(opts: {
-    eventId: string;
-    span?: "this" | "future";
-    occurrenceDate?: string;
-    title?: string;
-    startDate?: string;
-    endDate?: string;
-    timeZone?: string;
-    allDay?: boolean;
-    location?: string;
-    notes?: string;
-    calendarId?: string;
-  }): Promise<EventInfo> {
-    const args = ["update-event", "--id", opts.eventId];
-    if (opts.span) args.push("--span", opts.span);
-    if (opts.occurrenceDate) args.push("--occurrence", opts.occurrenceDate);
-    if (opts.title !== undefined) args.push("--title", opts.title);
-    if (opts.startDate) args.push("--start", opts.startDate);
-    if (opts.endDate) args.push("--end", opts.endDate);
-    if (opts.timeZone) args.push("--time-zone", opts.timeZone);
-    if (opts.allDay === true) args.push("--all-day");
-    if (opts.allDay === false) args.push("--no-all-day");
-    if (opts.location !== undefined) args.push("--location", opts.location);
-    if (opts.notes !== undefined) args.push("--notes", opts.notes);
-    if (opts.calendarId) args.push("--calendar-id", opts.calendarId);
-    return this.exec<EventInfo>(args);
+  async updateEvent(opts: UpdateEventOpts): Promise<EventInfo> {
+    return this.exec<EventInfo>(buildUpdateArgs(opts));
   }
 }

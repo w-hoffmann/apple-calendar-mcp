@@ -3,7 +3,7 @@ import EventKit
 import Foundation
 
 @main
-struct AppleBridge: ParsableCommand {
+struct AppleBridge: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "apple-bridge",
         abstract: "EventKit bridge for MCP server",
@@ -32,13 +32,13 @@ struct Doctor: ParsableCommand {
 
 // MARK: - Calendars
 
-struct Calendars: ParsableCommand {
+struct Calendars: AsyncParsableCommand {
     static let configuration = CommandConfiguration(abstract: "List calendars")
 
-    func run() {
+    func run() async {
         let service = CalendarService()
         do {
-            try service.requestAccess()
+            try await service.requestAccess()
             let calendars = service.listCalendars()
             printJSON(BridgeOutput.success(calendars))
         } catch {
@@ -49,7 +49,7 @@ struct Calendars: ParsableCommand {
 
 // MARK: - Events
 
-struct Events: ParsableCommand {
+struct Events: AsyncParsableCommand {
     static let configuration = CommandConfiguration(abstract: "List events in date range")
 
     @Option(help: "Start date (ISO8601)")
@@ -64,12 +64,12 @@ struct Events: ParsableCommand {
     @Option(name: .customLong("calendar-ids"), parsing: .upToNextOption, help: "Filter by calendar IDs")
     var calendarIds: [String] = []
 
-    func run() {
+    func run() async {
         let service = CalendarService()
         do {
             let startDate = try parseISO8601(start)
             let endDate = try parseISO8601(end)
-            try service.requestAccess()
+            try await service.requestAccess()
             let events = service.fetchEvents(
                 start: startDate,
                 end: endDate,
@@ -85,13 +85,13 @@ struct Events: ParsableCommand {
 
 // MARK: - Today
 
-struct Today: ParsableCommand {
+struct Today: AsyncParsableCommand {
     static let configuration = CommandConfiguration(abstract: "List today's events")
 
-    func run() {
+    func run() async {
         let service = CalendarService()
         do {
-            try service.requestAccess()
+            try await service.requestAccess()
             let events = service.todayEvents()
             printJSON(BridgeOutput.success(events))
         } catch {
@@ -102,7 +102,7 @@ struct Today: ParsableCommand {
 
 // MARK: - Create Event
 
-struct CreateEvent: ParsableCommand {
+struct CreateEvent: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "create-event",
         abstract: "Create a new event"
@@ -132,12 +132,12 @@ struct CreateEvent: ParsableCommand {
     @Option(help: "Notes")
     var notes: String?
 
-    func run() {
+    func run() async {
         let service = CalendarService()
         do {
             let startDate = try parseISO8601(start)
             let endDate = try parseISO8601(end)
-            try service.requestAccess()
+            try await service.requestAccess()
             let event = try service.createEvent(
                 calendarId: calendarId,
                 title: title,
@@ -157,7 +157,7 @@ struct CreateEvent: ParsableCommand {
 
 // MARK: - Update Event
 
-struct UpdateEvent: ParsableCommand {
+struct UpdateEvent: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "update-event",
         abstract: "Update an existing event"
@@ -199,20 +199,31 @@ struct UpdateEvent: ParsableCommand {
     @Option(name: .customLong("calendar-id"), help: "Move event to calendar with this ID")
     var calendarId: String?
 
-    func run() {
+    func run() async {
         let service = CalendarService()
         do {
-            try service.requestAccess()
-            let ekSpan: EKSpan = span == "future" ? .futureEvents : .thisEvent
+            // Pure argument validation first — independent of calendar access,
+            // so bad input fails fast (and is testable without TCC).
+            let ekSpan: EKSpan
+            switch span {
+            case "this": ekSpan = .thisEvent
+            case "future": ekSpan = .futureEvents
+            default:
+                throw BridgeError.invalidInput("Invalid span: \(span). Must be 'this' or 'future'.")
+            }
+
+            let isAllDayOpt: Bool?
+            if allDay && noAllDay {
+                throw BridgeError.invalidInput("Cannot specify both --all-day and --no-all-day.")
+            } else if allDay { isAllDayOpt = true }
+            else if noAllDay { isAllDayOpt = false }
+            else { isAllDayOpt = nil }
+
             let occDate = try occurrence.map { try parseISO8601($0) }
             let startDate = try start.map { try parseISO8601($0) }
             let endDate = try end.map { try parseISO8601($0) }
 
-            let isAllDayOpt: Bool?
-            if allDay { isAllDayOpt = true }
-            else if noAllDay { isAllDayOpt = false }
-            else { isAllDayOpt = nil }
-
+            try await service.requestAccess()
             let event = try service.updateEvent(
                 eventId: id,
                 span: ekSpan,

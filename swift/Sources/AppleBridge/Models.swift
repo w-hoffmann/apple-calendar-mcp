@@ -62,6 +62,8 @@ enum BridgeError: Error, LocalizedError, CustomStringConvertible {
     case calendarNotFound(String)
     case eventNotFound(String)
     case invalidDate(String)
+    case invalidTimeZone(String)
+    case invalidInput(String)
 
     var errorDescription: String? { description }
 
@@ -75,6 +77,10 @@ enum BridgeError: Error, LocalizedError, CustomStringConvertible {
             return "Event not found: \(id)"
         case .invalidDate(let value):
             return "Invalid ISO8601 date: \(value)"
+        case .invalidTimeZone(let id):
+            return "Invalid time zone: \(id)"
+        case .invalidInput(let message):
+            return message
         }
     }
 }

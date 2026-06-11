@@ -26,6 +26,13 @@ echo "=== Building Swift bridge ==="
 cd "$ROOT_DIR/swift"
 swift build -c release 2>&1
 codesign --force --sign - --entitlements apple-bridge.entitlements .build/release/apple-bridge
+
+# Verify the Info.plist (TCC usage description) was embedded and the signature is valid
+if ! otool -s __TEXT __info_plist .build/release/apple-bridge >/dev/null 2>&1; then
+  echo "Error: Info.plist not embedded in apple-bridge — the macOS calendar prompt would have no usage text" >&2
+  exit 1
+fi
+codesign --verify --strict .build/release/apple-bridge
 echo "Swift bridge built: swift/.build/release/apple-bridge"
 
 # --- Build TypeScript MCP server ---

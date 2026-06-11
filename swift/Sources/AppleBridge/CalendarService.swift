@@ -6,56 +6,27 @@ final class CalendarService {
 
     // MARK: - Access
 
-    func requestAccess() throws {
-        let semaphore = DispatchSemaphore(value: 0)
-        var accessGranted = false
-        var accessError: Error?
-
+    func requestAccess() async throws {
+        let granted: Bool
         if #available(macOS 14.0, *) {
-            store.requestFullAccessToEvents { granted, error in
-                accessGranted = granted
-                accessError = error
-                semaphore.signal()
-            }
+            granted = try await store.requestFullAccessToEvents()
         } else {
-            store.requestAccess(to: .event) { granted, error in
-                accessGranted = granted
-                accessError = error
-                semaphore.signal()
-            }
+            granted = try await store.requestAccess(to: .event)
         }
-
-        semaphore.wait()
-
-        if let error = accessError {
-            throw error
-        }
-        if !accessGranted {
+        if !granted {
             throw BridgeError.permissionDenied
         }
     }
 
     func accessStatus() -> String {
-        if #available(macOS 14.0, *) {
-            switch EKEventStore.authorizationStatus(for: .event) {
-            case .fullAccess: return "fullAccess"
-            case .writeOnly: return "writeOnly"
-            case .authorized: return "authorized"
-            case .denied: return "denied"
-            case .restricted: return "restricted"
-            case .notDetermined: return "notDetermined"
-            @unknown default: return "unknown"
-            }
-        } else {
-            switch EKEventStore.authorizationStatus(for: .event) {
-            case .fullAccess: return "fullAccess"
-            case .writeOnly: return "writeOnly"
-            case .authorized: return "authorized"
-            case .denied: return "denied"
-            case .restricted: return "restricted"
-            case .notDetermined: return "notDetermined"
-            @unknown default: return "unknown"
-            }
+        switch EKEventStore.authorizationStatus(for: .event) {
+        case .fullAccess: return "fullAccess"
+        case .writeOnly: return "writeOnly"
+        case .authorized: return "authorized"
+        case .denied: return "denied"
+        case .restricted: return "restricted"
+        case .notDetermined: return "notDetermined"
+        @unknown default: return "unknown"
         }
     }
 
@@ -137,6 +108,14 @@ final class CalendarService {
         guard let calendar = store.calendar(withIdentifier: calendarId) else {
             throw BridgeError.calendarNotFound(calendarId)
         }
+        if title.isEmpty {
+            throw BridgeError.invalidInput("Title must not be empty.")
+        }
+        // All-day events may legitimately span a single day (start == end);
+        // timed events require a strictly positive duration.
+        guard isAllDay ? startDate <= endDate : startDate < endDate else {
+            throw BridgeError.invalidInput("Start date must be before end date.")
+        }
 
         let event = EKEvent(eventStore: store)
         event.calendar = calendar
@@ -145,7 +124,10 @@ final class CalendarService {
         event.endDate = endDate
         event.isAllDay = isAllDay
 
-        if let tz = timeZone, let zone = TimeZone(identifier: tz) {
+        if let tz = timeZone {
+            guard let zone = TimeZone(identifier: tz) else {
+                throw BridgeError.invalidTimeZone(tz)
+            }
             event.timeZone = zone
         }
         if let loc = location { event.location = loc }
@@ -186,7 +168,12 @@ final class CalendarService {
             throw BridgeError.eventNotFound(eventId)
         }
 
-        if let title = title { ev.title = title }
+        if let title = title {
+            guard !title.isEmpty else {
+                throw BridgeError.invalidInput("Title must not be empty.")
+            }
+            ev.title = title
+        }
         if let startDate = startDate { ev.startDate = startDate }
         if let endDate = endDate { ev.endDate = endDate }
         if let isAllDay = isAllDay { ev.isAllDay = isAllDay }
@@ -194,7 +181,7 @@ final class CalendarService {
         if let notes = notes { ev.notes = notes }
         if let tz = timeZone {
             guard let zone = TimeZone(identifier: tz) else {
-                throw BridgeError.invalidDate("Invalid time zone identifier: \(tz)")
+                throw BridgeError.invalidTimeZone(tz)
             }
             ev.timeZone = zone
         }
@@ -205,6 +192,12 @@ final class CalendarService {
             ev.calendar = cal
         }
 
+        // All-day events may legitimately span a single day (start == end);
+        // timed events require a strictly positive duration.
+        guard ev.isAllDay ? ev.startDate <= ev.endDate : ev.startDate < ev.endDate else {
+            throw BridgeError.invalidInput("Start date must be before end date.")
+        }
+
         try store.save(ev, span: span)
         return eventToInfo(ev)
     }
@@ -213,10 +206,10 @@ final class CalendarService {
 
     private func eventToInfo(_ event: EKEvent) -> EventInfo {
         EventInfo(
-            id: event.eventIdentifier,
+            id: event.eventIdentifier ?? "",
             externalId: event.calendarItemExternalIdentifier,
-            calendarId: event.calendar.calendarIdentifier,
-            calendarTitle: event.calendar.title,
+            calendarId: event.calendar?.calendarIdentifier ?? "",
+            calendarTitle: event.calendar?.title ?? "",
             title: event.title ?? "(No title)",
             startDate: formatISO8601(event.startDate),
             endDate: formatISO8601(event.endDate),

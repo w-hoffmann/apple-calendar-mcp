@@ -14,7 +14,16 @@ let package = Package(
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/AppleBridge",
-            swiftSettings: [.unsafeFlags(["-parse-as-library"])]
+            swiftSettings: [.unsafeFlags(["-parse-as-library"])],
+            // Embed Info.plist so the TCC prompt has a usage description at
+            // runtime (NSCalendarsFullAccessUsageDescription). Without this the
+            // macOS 14+ access request can fail silently with no prompt text.
+            linkerSettings: [.unsafeFlags([
+                "-Xlinker", "-sectcreate",
+                "-Xlinker", "__TEXT",
+                "-Xlinker", "__info_plist",
+                "-Xlinker", "Info.plist",
+            ])]
         ),
     ]
 )

@@ -17,6 +17,9 @@ node_modules/
 .vscode/
 .idea/
 
+# Claude Code (local agent config & state)
+.claude/
+
 # Personal/local files
 CONTINUITY.md
 apple-eventkit-mcp-plan-personal.md

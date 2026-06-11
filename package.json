@@ -1,6 +1,6 @@
 {
   "name": "apple-calendar-mcp",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "MCP server for Apple Calendar via native EventKit API with proper recurring event support",
   "type": "module",
   "main": "build/index.js",
@@ -15,6 +15,9 @@
   ],
   "scripts": {
     "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && vitest run",
+    "test:watch": "vitest",
     "postinstall": "./scripts/postinstall.sh",
     "prepublishOnly": "npm run build"
   },
@@ -27,15 +30,15 @@
     "claude",
     "macos"
   ],
-  "author": "Egor Kurito",
+  "author": "Waldemar Hoffmann <office@w-hoffmann.com>",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/EgorKurito/apple-calendar-mcp.git"
+    "url": "git+https://github.com/w-hoffmann/apple-calendar-mcp.git"
   },
-  "homepage": "https://github.com/EgorKurito/apple-calendar-mcp#readme",
+  "homepage": "https://github.com/w-hoffmann/apple-calendar-mcp#readme",
   "bugs": {
-    "url": "https://github.com/EgorKurito/apple-calendar-mcp/issues"
+    "url": "https://github.com/w-hoffmann/apple-calendar-mcp/issues"
   },
   "os": [
     "darwin"
@@ -44,12 +47,13 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.0",
+    "@modelcontextprotocol/sdk": "^1.26.0",
     "execa": "^9.5.2",
     "zod": "^3.24.2"
   },
   "devDependencies": {
     "@types/node": "^22.13.1",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.0"
   }
 }

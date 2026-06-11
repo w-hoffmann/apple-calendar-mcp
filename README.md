@@ -49,7 +49,7 @@ npx apple-calendar-mcp doctor
 ### Option 2: From source
 
 ```bash
-git clone https://github.com/EgorKurito/apple-calendar-mcp.git
+git clone https://github.com/w-hoffmann/apple-calendar-mcp.git
 cd apple-calendar-mcp
 ./scripts/build.sh
 ```
@@ -99,6 +99,8 @@ claude mcp add --scope user apple-calendar \
 | `create_event` | Create a new calendar event |
 | `update_event` | Update an existing event (reschedule, rename, move between calendars, edit location/notes) |
 
+The write tools validate input and return a clear error instead of failing silently: `create_event` and `update_event` reject an empty title, an inverted date range (start after end), and an invalid time-zone identifier; `update_event` also rejects an unknown `span` and conflicting all-day flags. All-day events may span a single day.
+
 ## Verification
 
 ```bash
@@ -136,7 +138,8 @@ The Swift binary expects dates in format `2026-02-07T10:00:00Z` or `2026-02-07T1
 2. Create a feature branch
 3. Make your changes
 4. Run `./scripts/build.sh` to verify the build
-5. Submit a pull request
+5. Run `npm test` and `npm run typecheck`
+6. Submit a pull request
 
 ## License
 

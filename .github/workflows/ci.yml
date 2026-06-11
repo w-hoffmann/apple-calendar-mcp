@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Swift bridge
+        run: |
+          cd swift
+          swift build -c release
+          codesign --force --sign - --entitlements apple-bridge.entitlements .build/release/apple-bridge
+
+      - name: Verify Info.plist is embedded
+        run: otool -s __TEXT __info_plist swift/.build/release/apple-bridge > /dev/null
+
+      - name: Swift validation smoke (access-independent)
+        run: |
+          out=$(swift/.build/release/apple-bridge update-event --id X --span sideways)
+          echo "$out"
+          echo "$out" | grep -q '"status" : "error"'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
