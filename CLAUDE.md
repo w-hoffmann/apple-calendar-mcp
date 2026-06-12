@@ -22,6 +22,7 @@ npm run build    # tsc → build/
 swift/.build/release/apple-bridge doctor
 swift/.build/release/apple-bridge calendars
 swift/.build/release/apple-bridge today
+swift/.build/release/apple-bridge update-event --id <ID> --title "New title"
 
 # Test MCP server (interactive)
 APPLE_BRIDGE_BIN=swift/.build/release/apple-bridge npx @anthropic-ai/sdk mcp-run build/index.js
@@ -82,6 +83,6 @@ Via `.mcp.json` in a consumer project or `claude mcp add --scope user`:
 
 ## Troubleshooting
 
-- **Calendar access denied**: `tccutil reset Calendar` → re-run `apple-bridge doctor` for a new TCC prompt
+- **Calendar access denied**: enable access in System Settings → Privacy & Security → Calendars (Full Access), then re-run `apple-bridge doctor`
 - **Recurring events not expanding**: ensure `predicateForEvents` is being used, not direct `EKEvent` access
 - **ISO8601 parse error**: Swift expects format `2026-02-07T10:00:00Z` or `2026-02-07T10:00:00.000Z`

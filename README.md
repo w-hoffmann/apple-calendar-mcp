@@ -33,18 +33,7 @@ claude mcp add --scope user apple-calendar -- npx apple-calendar-mcp
 
 This will automatically download the package, compile the Swift bridge, and register the MCP server. Requires macOS with Xcode or Swift toolchain installed.
 
-After installation, grant calendar access:
-
-```bash
-npx apple-calendar-mcp doctor
-```
-
-Grant **Full Access** when prompted. If access was previously denied:
-
-```bash
-tccutil reset Calendar
-npx apple-calendar-mcp doctor
-```
+After installation, grant calendar access. The first time Claude invokes a calendar tool, macOS prompts for Calendar access — grant **Full Access**. If you previously denied access, re-enable it under **System Settings → Privacy & Security → Calendars**.
 
 ### Option 2: From source
 
@@ -115,14 +104,16 @@ swift/.build/release/apple-bridge today
 
 # Events in a date range (recurring events expanded)
 swift/.build/release/apple-bridge events --start "2026-02-01T00:00:00Z" --end "2026-02-28T23:59:59Z"
+
+# Update an event (reschedule, rename, move between calendars, …)
+swift/.build/release/apple-bridge update-event --id <ID> --title "New title"
 ```
 
 ## Troubleshooting
 
 **Calendar access denied**
-Reset TCC permissions and re-run:
+Enable access under **System Settings → Privacy & Security → Calendars** (grant **Full Access**), then re-run:
 ```bash
-tccutil reset Calendar
 swift/.build/release/apple-bridge doctor
 ```
 
