@@ -119,29 +119,59 @@ export function buildUpdateArgs(opts: UpdateEventOpts): string[] {
   return args;
 }
 
+export interface SwiftBridgeOptions {
+  /** execa timeout in ms (default 30_000). Tests inject a tiny value to exercise the hang/timeout path fast. */
+  timeoutMs?: number;
+  /** execa maxBuffer in bytes (default 10 MB). Tests inject a tiny value to exercise the oversized-output path fast. */
+  maxBuffer?: number;
+}
+
 export class SwiftBridge {
   private binPath: string;
+  private timeoutMs: number;
+  private maxBuffer: number;
 
-  constructor() {
+  // The options bag is fully defaulted: behavior is unchanged at defaults
+  // (30s timeout, 10 MB buffer). It exists so contract tests can inject a
+  // tiny timeout / buffer to exercise the hang and oversized-output paths
+  // without waiting 30s or allocating megabytes.
+  constructor(opts: SwiftBridgeOptions = {}) {
     const __dirname = dirname(fileURLToPath(import.meta.url));
     this.binPath =
       process.env.APPLE_BRIDGE_BIN ??
       join(__dirname, "..", "swift", ".build", "release", "apple-bridge");
+    this.timeoutMs = opts.timeoutMs ?? 30_000;
+    // Calendar JSON is tiny; 10MB is generous headroom and replaces execa's
+    // 100MB default.
+    this.maxBuffer = opts.maxBuffer ?? 10 * 1024 * 1024;
   }
 
   private async exec<T>(args: string[]): Promise<T> {
     const result = await execa(this.binPath, args, {
       reject: false,
-      timeout: 30_000,
-      // Calendar JSON is tiny; 10MB is generous headroom and replaces execa's
-      // 100MB default.
-      maxBuffer: 10 * 1024 * 1024,
+      timeout: this.timeoutMs,
+      maxBuffer: this.maxBuffer,
     });
 
-    if (result.exitCode !== 0 && !result.stdout) {
+    // Surface the two terminal conditions execa reports with `reject: false`
+    // explicitly — otherwise a timeout falls through as "failed (exit
+    // undefined)" and an over-limit run reaches JSON.parse on truncated output
+    // and reports a misleading "Failed to parse". (execa sets `timedOut` /
+    // `isMaxBuffer` on the resolved result; verified against execa 9.5.x.)
+    if (result.timedOut) {
+      throw new Error(`apple-bridge timed out after ${this.timeoutMs}ms`);
+    }
+    if (result.isMaxBuffer) {
       throw new Error(
-        `apple-bridge failed (exit ${result.exitCode}): ${result.stderr}`
+        `apple-bridge output exceeded the ${this.maxBuffer}-byte buffer limit`
       );
+    }
+
+    if (result.exitCode !== 0 && !result.stdout) {
+      const how = result.signal
+        ? `killed by ${result.signal}`
+        : `exit ${result.exitCode}`;
+      throw new Error(`apple-bridge failed (${how}): ${result.stderr}`);
     }
 
     let output: BridgeOutput<T>;

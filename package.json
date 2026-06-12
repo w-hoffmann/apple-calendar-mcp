@@ -16,8 +16,9 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build && vitest run",
-    "test:watch": "vitest",
+    "test": "npm run build && vitest run --project unit",
+    "test:e2e": "npm run build && vitest run --project e2e",
+    "test:watch": "vitest --project unit",
     "postinstall": "./scripts/postinstall.sh",
     "prepublishOnly": "npm run build"
   },

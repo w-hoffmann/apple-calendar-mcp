@@ -1,3 +1,4 @@
+import AppleBridgeCore
 import ArgumentParser
 import EventKit
 import Foundation
@@ -14,6 +15,7 @@ struct AppleBridge: AsyncParsableCommand {
             Today.self,
             CreateEvent.self,
             UpdateEvent.self,
+            TestCalendarCommand.self,
         ]
     )
 }
@@ -204,13 +206,9 @@ struct UpdateEvent: AsyncParsableCommand {
         do {
             // Pure argument validation first — independent of calendar access,
             // so bad input fails fast (and is testable without TCC).
-            let ekSpan: EKSpan
-            switch span {
-            case "this": ekSpan = .thisEvent
-            case "future": ekSpan = .futureEvents
-            default:
-                throw BridgeError.invalidInput("Invalid span: \(span). Must be 'this' or 'future'.")
-            }
+            let ekSpan: EKSpan = try Validation.parseSpan(span) == .future
+                ? .futureEvents
+                : .thisEvent
 
             let isAllDayOpt: Bool?
             if allDay && noAllDay {
@@ -238,6 +236,70 @@ struct UpdateEvent: AsyncParsableCommand {
                 calendarId: calendarId
             )
             printJSON(BridgeOutput.success(event))
+        } catch {
+            printError(error.localizedDescription)
+        }
+    }
+}
+
+// MARK: - Test Calendar (hidden E2E helper)
+
+// Not an MCP tool and hidden from `--help` (shouldDisplay: false). Used only by
+// the opt-in E2E suite to create/delete its own ephemeral marker calendars. The
+// marker-prefix guard lives in Swift (AppleBridgeCore) and runs before any
+// EventKit call, so this can never touch a pre-existing calendar.
+
+struct TestCalendarCommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "test-calendar",
+        abstract: "Hidden E2E helper: manage ephemeral marker calendars",
+        shouldDisplay: false,
+        subcommands: [TestCalendarCreate.self, TestCalendarDelete.self]
+    )
+}
+
+struct TestCalendarCreate: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "create")
+
+    @Option(help: "Marker calendar name (must start with MCP-E2E-)")
+    var name: String
+
+    func run() async {
+        let service = CalendarService()
+        do {
+            // Refuse non-marker names before requesting access or touching
+            // EventKit (the service guards again, defense in depth).
+            guard TestCalendar.isValidTestCalendarName(name) else {
+                throw BridgeError.invalidInput(
+                    "Refusing non-marker calendar name: \(name). Must start with \(TestCalendar.markerPrefix)."
+                )
+            }
+            try await service.requestAccess()
+            let info = try service.createTestCalendar(name: name)
+            printJSON(BridgeOutput.success(info))
+        } catch {
+            printError(error.localizedDescription)
+        }
+    }
+}
+
+struct TestCalendarDelete: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "delete")
+
+    @Option(help: "Marker calendar name (must start with MCP-E2E-)")
+    var name: String
+
+    func run() async {
+        let service = CalendarService()
+        do {
+            guard TestCalendar.isValidTestCalendarName(name) else {
+                throw BridgeError.invalidInput(
+                    "Refusing non-marker calendar name: \(name). Must start with \(TestCalendar.markerPrefix)."
+                )
+            }
+            try await service.requestAccess()
+            try service.deleteTestCalendar(name: name)
+            printJSON(BridgeOutput<String>.success("deleted"))
         } catch {
             printError(error.localizedDescription)
         }

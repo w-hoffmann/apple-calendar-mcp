@@ -109,6 +109,36 @@ swift/.build/release/apple-bridge events --start "2026-02-01T00:00:00Z" --end "2
 swift/.build/release/apple-bridge update-event --id <ID> --title "New title"
 ```
 
+## Testing
+
+The suite is layered so everything except the opt-in E2E layer runs without
+any calendar access (and runs in CI):
+
+```bash
+npm test          # builds, then runs the vitest `unit` project:
+                  #   schema + arg-builder unit tests, bridge contract tests
+                  #   (fake binary), and in-process MCP integration tests
+npm run typecheck # tsc --noEmit
+cd swift && swift test   # AppleBridgeCore unit tests (models, validation,
+                         # recurring slot matching) — EventKit-free
+```
+
+**E2E (opt-in, writes to a self-created calendar).** The E2E suite exercises
+the full stack against a calendar it creates itself. It is **disabled by
+default** and never runs in CI. It writes only to a calendar named
+`MCP-E2E-<runId>`, asserts that target before every write, and deletes it
+(and any leftover `MCP-E2E-*` calendars) on teardown. Pre-existing calendars
+are never touched. Run it explicitly, with Full Calendar Access granted:
+
+```bash
+E2E_CALENDAR_TESTS=1 npm run test:e2e
+```
+
+It is **doubly gated**: both the `e2e` vitest project must be selected (only
+`npm run test:e2e` does this — `npm test` runs the `unit` project) **and**
+`E2E_CALENDAR_TESTS=1` must be set. If either gate is missing, or Full
+Calendar Access is not granted, the suite **skips** rather than failing.
+
 ## Troubleshooting
 
 **Calendar access denied**
@@ -129,7 +159,7 @@ The Swift binary expects dates in format `2026-02-07T10:00:00Z` or `2026-02-07T1
 2. Create a feature branch
 3. Make your changes
 4. Run `./scripts/build.sh` to verify the build
-5. Run `npm test` and `npm run typecheck`
+5. Run `npm test`, `npm run typecheck`, and `swift test` (see [Testing](#testing))
 6. Submit a pull request
 
 ## License

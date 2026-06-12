@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
   pull_request:
 
 jobs:
@@ -26,6 +26,13 @@ jobs:
           echo "$out"
           echo "$out" | grep -q '"status" : "error"'
 
+      # AppleBridgeCore unit tests (models, validation, recurring slot matching,
+      # E2E marker/source guards). EventKit-free, so no calendar access needed.
+      # macos-latest provides the Xcode 16+ / Swift 6 toolchain Swift Testing
+      # requires (the package manifest stays swift-tools-version: 5.9).
+      - name: Swift unit tests
+        run: cd swift && swift test
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -36,5 +43,9 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # Runs the vitest `unit` project only (schema, arg-builder, bridge
+      # contract, MCP integration). The `e2e` project is never selected here,
+      # so the E2E suite — the only layer that touches a real calendar — never
+      # runs in CI.
       - name: Test
         run: npm test

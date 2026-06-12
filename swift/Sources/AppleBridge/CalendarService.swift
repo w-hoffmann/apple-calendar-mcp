@@ -1,3 +1,4 @@
+import AppleBridgeCore
 import EventKit
 import Foundation
 
@@ -48,16 +49,7 @@ final class CalendarService {
     // MARK: - Calendars
 
     func listCalendars() -> [CalendarInfo] {
-        store.calendars(for: .event).map { cal in
-            CalendarInfo(
-                id: cal.calendarIdentifier,
-                title: cal.title,
-                type: calendarTypeString(cal.type),
-                source: cal.source?.title ?? "Unknown",
-                color: hexColor(cal.cgColor),
-                isImmutable: cal.isImmutable
-            )
-        }
+        store.calendars(for: .event).map { calendarInfo(from: $0) }
     }
 
     // MARK: - Events
@@ -108,14 +100,8 @@ final class CalendarService {
         guard let calendar = store.calendar(withIdentifier: calendarId) else {
             throw BridgeError.calendarNotFound(calendarId)
         }
-        if title.isEmpty {
-            throw BridgeError.invalidInput("Title must not be empty.")
-        }
-        // All-day events may legitimately span a single day (start == end);
-        // timed events require a strictly positive duration.
-        guard isAllDay ? startDate <= endDate : startDate < endDate else {
-            throw BridgeError.invalidInput("Start date must be before end date.")
-        }
+        try Validation.validateTitle(title)
+        try Validation.validateRange(start: startDate, end: endDate, isAllDay: isAllDay)
 
         let event = EKEvent(eventStore: store)
         event.calendar = calendar
@@ -125,10 +111,7 @@ final class CalendarService {
         event.isAllDay = isAllDay
 
         if let tz = timeZone {
-            guard let zone = TimeZone(identifier: tz) else {
-                throw BridgeError.invalidTimeZone(tz)
-            }
-            event.timeZone = zone
+            event.timeZone = try Validation.validateTimeZone(tz)
         }
         if let loc = location { event.location = loc }
         if let n = notes { event.notes = n }
@@ -165,37 +148,24 @@ final class CalendarService {
             let start = occ
             let end = Calendar.current.date(byAdding: .day, value: 1, to: occ)!
             let predicate = store.predicateForEvents(withStart: start, end: end, calendars: nil)
-            let events = store.events(matching: predicate)
-            // Match on EKEvent.occurrenceDate (the stable original series slot that
-            // get_events emits), not startDate — a detached/moved occurrence's
-            // startDate has diverged while its occurrenceDate stays pinned. The 1 ms
-            // tolerance absorbs the millisecond quantization of the re-serialized
-            // value while staying far below any real occurrence spacing. All-day
-            // occurrences match on the same midnight instant.
-            // occurrenceDate is a `null_unspecified Date!` (IUO); it is reliably
-            // non-nil for store-predicate results (they always carry a startDate),
-            // but we bind it defensively rather than force-unwrap.
-            let matched = events.first {
-                guard let od = $0.occurrenceDate else { return false }
-                return abs(od.timeIntervalSince(occ)) < 0.001
-                    && ($0.eventIdentifier == eventId || $0.calendarItemExternalIdentifier == eventId)
-            }
-            if let matched = matched {
-                event = matched
+            let ekEvents = store.events(matching: predicate)
+            // Map the EventKit window to plain value types and delegate the
+            // matching decision to the pure SlotMatcher (see SlotMatching.swift).
+            let stored = ekEvents.map { storedEvent(from: $0) }
+            if let idx = SlotMatcher.firstMatch(in: stored, eventId: eventId, occurrence: occ) {
+                event = ekEvents[idx]
             } else {
                 // No instance matched the supplied occurrenceDate. If the target series
                 // is recurring, surface a descriptive, recoverable error instead of a
                 // bare eventNotFound. Determine recurrence three ways: (1) the window
-                // results by either id form (honors callers who passed
-                // calendarItemExternalIdentifier); (2) the canonical-id lookup
-                // (store.event(withIdentifier:) does not resolve external ids); and
-                // (3) an external-id lookup (store.calendarItems(withExternalIdentifier:)),
-                // which keeps the descriptive error reachable for an external-id caller
-                // whose occurrence has moved outside the day window.
+                // results by either id form (the EventKit-free SlotMatcher leg);
+                // (2) the canonical-id lookup (store.event(withIdentifier:) does not
+                // resolve external ids); and (3) an external-id lookup
+                // (store.calendarItems(withExternalIdentifier:)), which keeps the
+                // descriptive error reachable for an external-id caller whose
+                // occurrence has moved outside the day window.
                 let isRecurring =
-                    events.first {
-                        $0.eventIdentifier == eventId || $0.calendarItemExternalIdentifier == eventId
-                    }?.hasRecurrenceRules == true
+                    SlotMatcher.windowIndicatesRecurring(stored, eventId: eventId)
                     || store.event(withIdentifier: eventId)?.hasRecurrenceRules == true
                     || store.calendarItems(withExternalIdentifier: eventId)
                         .contains { ($0 as? EKEvent)?.hasRecurrenceRules == true }
@@ -221,9 +191,7 @@ final class CalendarService {
         }
 
         if let title = title {
-            guard !title.isEmpty else {
-                throw BridgeError.invalidInput("Title must not be empty.")
-            }
+            try Validation.validateTitle(title)
             ev.title = title
         }
         if let startDate = startDate { ev.startDate = startDate }
@@ -232,10 +200,7 @@ final class CalendarService {
         if let location = location { ev.location = location }
         if let notes = notes { ev.notes = notes }
         if let tz = timeZone {
-            guard let zone = TimeZone(identifier: tz) else {
-                throw BridgeError.invalidTimeZone(tz)
-            }
-            ev.timeZone = zone
+            ev.timeZone = try Validation.validateTimeZone(tz)
         }
         if let calId = calendarId {
             guard let cal = store.calendar(withIdentifier: calId) else {
@@ -244,14 +209,72 @@ final class CalendarService {
             ev.calendar = cal
         }
 
-        // All-day events may legitimately span a single day (start == end);
-        // timed events require a strictly positive duration.
-        guard ev.isAllDay ? ev.startDate <= ev.endDate : ev.startDate < ev.endDate else {
-            throw BridgeError.invalidInput("Start date must be before end date.")
-        }
+        try Validation.validateRange(start: ev.startDate, end: ev.endDate, isAllDay: ev.isAllDay)
 
         try store.save(ev, span: span)
         return eventToInfo(ev)
+    }
+
+    // MARK: - Test Calendar (hidden E2E helper)
+
+    /// Create an ephemeral marker calendar in a writable source. Refuses any
+    /// non-marker name before touching EventKit (defense in depth — the CLI
+    /// command checks too).
+    func createTestCalendar(name: String) throws -> CalendarInfo {
+        guard TestCalendar.isValidTestCalendarName(name) else {
+            throw BridgeError.invalidInput(
+                "Refusing to create a calendar whose name is not an E2E marker (\(TestCalendar.markerPrefix)...): \(name)"
+            )
+        }
+        guard let source = writableSource() else {
+            throw BridgeError.invalidInput("No writable calendar source available.")
+        }
+        let calendar = EKCalendar(for: .event, eventStore: store)
+        calendar.title = name
+        calendar.source = source
+        // commit: true so the calendar is persisted and visible to a later
+        // query and to teardown; commit: false would leave it only in memory.
+        try store.saveCalendar(calendar, commit: true)
+        return calendarInfo(from: calendar)
+    }
+
+    /// Delete every marker calendar whose title is *exactly* `name` (normally
+    /// one — `createTestCalendar` makes a uniquely-named calendar per run).
+    /// Idempotent: succeeds with no effect if none match. Refuses any
+    /// non-marker name before touching EventKit. The marker-prefix guard plus
+    /// exact-name match means this can never remove a pre-existing user
+    /// calendar; to confirm removal, query `listCalendars()` separately.
+    func deleteTestCalendar(name: String) throws {
+        guard TestCalendar.isValidTestCalendarName(name) else {
+            throw BridgeError.invalidInput(
+                "Refusing to delete a calendar whose name is not an E2E marker (\(TestCalendar.markerPrefix)...): \(name)"
+            )
+        }
+        let matches = store.calendars(for: .event).filter { $0.title == name }
+        for calendar in matches {
+            try store.removeCalendar(calendar, commit: true)
+        }
+    }
+
+    /// The source to create a test calendar in: prefer Local, else the first
+    /// CalDAV/Exchange source. Selection order is the pure WritableSource helper.
+    private func writableSource() -> EKSource? {
+        let sources = store.sources
+        let kinds = sources.map { sourceKind(from: $0.sourceType) }
+        guard let idx = WritableSource.preferredIndex(kinds) else { return nil }
+        return sources[idx]
+    }
+
+    private func sourceKind(from type: EKSourceType) -> SourceKind {
+        switch type {
+        case .local: return .local
+        case .calDAV: return .calDAV
+        case .exchange: return .exchange
+        case .mobileMe: return .calDAV  // legacy Apple sync source; treat as writable
+        case .subscribed: return .subscription
+        case .birthdays: return .birthday
+        @unknown default: return .other
+        }
     }
 
     // MARK: - Helpers
@@ -274,6 +297,28 @@ final class CalendarService {
             isDetached: event.isDetached,
             location: event.location,
             notes: event.notes
+        )
+    }
+
+    /// EKEvent → StoredEvent shim (the thin, untested mapping the design calls
+    /// for; the matching decision itself lives in the pure SlotMatcher).
+    private func storedEvent(from event: EKEvent) -> StoredEvent {
+        StoredEvent(
+            eventId: event.eventIdentifier,
+            externalId: event.calendarItemExternalIdentifier,
+            occurrenceDate: event.occurrenceDate,
+            hasRecurrenceRules: event.hasRecurrenceRules
+        )
+    }
+
+    private func calendarInfo(from cal: EKCalendar) -> CalendarInfo {
+        CalendarInfo(
+            id: cal.calendarIdentifier,
+            title: cal.title,
+            type: calendarTypeString(cal.type),
+            source: cal.source?.title ?? "Unknown",
+            color: hexColor(cal.cgColor),
+            isImmutable: cal.isImmutable
         )
     }
 
