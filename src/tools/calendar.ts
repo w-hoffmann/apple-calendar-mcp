@@ -104,6 +104,26 @@ export const updateEventSchema = z
         path: ["occurrenceDate"],
       });
     }
+    // Require at least one mutable field: an update with only
+    // eventId/span/occurrenceDate would be a no-op write (it mutates
+    // last-modified metadata yet changes nothing). Reject it here, before any
+    // bridge invocation / save.
+    const hasMutableField =
+      val.title !== undefined ||
+      val.startDate !== undefined ||
+      val.endDate !== undefined ||
+      val.timeZone !== undefined ||
+      val.allDay !== undefined ||
+      val.location !== undefined ||
+      val.notes !== undefined ||
+      val.calendarId !== undefined;
+    if (!hasMutableField) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "At least one mutable field is required (title, startDate, endDate, timeZone, allDay, location, notes, or calendarId).",
+      });
+    }
   });
 
 // --- Default search window (exported for unit tests) ----------------------

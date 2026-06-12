@@ -81,18 +81,50 @@ describe("update_event refined schema (span/occurrenceDate)", () => {
         eventId: "E",
         span: "future",
         occurrenceDate: "2026-07-01T10:00:00Z",
+        title: "New title",
       }).success
     ).toBe(true);
   });
 
   it('accepts span: "this" without occurrenceDate', () => {
     expect(
-      updateEventSchema.safeParse({ eventId: "E", span: "this" }).success
+      updateEventSchema.safeParse({
+        eventId: "E",
+        span: "this",
+        title: "New title",
+      }).success
     ).toBe(true);
   });
 
   it("accepts an omitted span without occurrenceDate", () => {
-    expect(updateEventSchema.safeParse({ eventId: "E" }).success).toBe(true);
+    expect(
+      updateEventSchema.safeParse({
+        eventId: "E",
+        title: "New title",
+      }).success
+    ).toBe(true);
+  });
+
+  it("rejects a no-op update with no mutable field", () => {
+    // Only eventId — no title/startDate/endDate/timeZone/allDay/location/notes/
+    // calendarId — would be a no-op write, so it must fail validation.
+    expect(updateEventSchema.safeParse({ eventId: "E" }).success).toBe(false);
+    expect(
+      updateEventSchema.safeParse({
+        eventId: "E",
+        span: "this",
+        occurrenceDate: "2026-07-01T10:00:00Z",
+      }).success
+    ).toBe(false);
+  });
+
+  it("accepts an update that supplies at least one mutable field", () => {
+    expect(
+      updateEventSchema.safeParse({ eventId: "E", location: "Room 1" }).success
+    ).toBe(true);
+    expect(
+      updateEventSchema.safeParse({ eventId: "E", allDay: true }).success
+    ).toBe(true);
   });
 });
 
@@ -166,9 +198,20 @@ describe("update_event tool registration", () => {
 
   it("handler passes a valid update through to the bridge", async () => {
     const { tools, getLastBridgeCall } = register();
-    const r = await tools.update_event.handler({ eventId: "E", span: "this" });
+    const r = await tools.update_event.handler({
+      eventId: "E",
+      span: "this",
+      title: "New title",
+    });
     expect(r.isError).toBeFalsy();
     expect(getLastBridgeCall()?.eventId).toBe("E");
+  });
+
+  it("handler rejects a no-op update and does not call the bridge", async () => {
+    const { tools, getLastBridgeCall } = register();
+    const r = await tools.update_event.handler({ eventId: "E" });
+    expect(r.isError).toBe(true);
+    expect(getLastBridgeCall()).toBeNull();
   });
 });
 

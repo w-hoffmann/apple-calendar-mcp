@@ -133,6 +133,9 @@ export class SwiftBridge {
     const result = await execa(this.binPath, args, {
       reject: false,
       timeout: 30_000,
+      // Calendar JSON is tiny; 10MB is generous headroom and replaces execa's
+      // 100MB default.
+      maxBuffer: 10 * 1024 * 1024,
     });
 
     if (result.exitCode !== 0 && !result.stdout) {
