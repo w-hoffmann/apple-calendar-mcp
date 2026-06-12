@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { z } from "zod";
 import {
   createEventInput,
+  createEventSchema,
   updateEventInput,
   updateEventSchema,
   registerCalendarTools,
@@ -10,6 +11,20 @@ import {
 
 const createSchema = z.object(createEventInput);
 const updateSchema = z.object(updateEventInput);
+
+// Register every tool against a no-op server/bridge and return the captured
+// config per tool name. Registration never invokes the bridge, so an empty
+// bridge is fine.
+function registerAllTools(): Record<string, any> {
+  const tools: Record<string, any> = {};
+  const fakeServer = {
+    registerTool: (name: string, config: any) => {
+      tools[name] = config;
+    },
+  };
+  registerCalendarTools(fakeServer as any, {} as any);
+  return tools;
+}
 
 describe("create_event input schema", () => {
   it("rejects an empty title", () => {
@@ -243,5 +258,174 @@ describe("search_events advertises all matched fields", () => {
     expect(queryDesc).toContain("title");
     expect(queryDesc).toContain("location");
     expect(queryDesc).toContain("notes");
+  });
+});
+
+describe("tool surface: annotations, titles, and presence", () => {
+  const READ_TOOLS = [
+    "get_calendars",
+    "get_events",
+    "search_events",
+    "find_free_slots",
+  ];
+  const WRITE_TOOLS = ["create_event", "update_event"];
+
+  it("drops get_today_events and adds find_free_slots", () => {
+    const tools = registerAllTools();
+    expect(tools.get_today_events).toBeUndefined();
+    expect(tools.find_free_slots).toBeDefined();
+    expect(Object.keys(tools).sort()).toEqual(
+      [...READ_TOOLS, ...WRITE_TOOLS].sort()
+    );
+  });
+
+  it("read tools advertise readOnlyHint: true and a title", () => {
+    const tools = registerAllTools();
+    for (const name of READ_TOOLS) {
+      expect(tools[name].annotations?.readOnlyHint).toBe(true);
+      expect(tools[name].title).toBeTruthy();
+    }
+  });
+
+  it("write tools advertise readOnlyHint: false and a title", () => {
+    const tools = registerAllTools();
+    for (const name of WRITE_TOOLS) {
+      expect(tools[name].annotations?.readOnlyHint).toBe(false);
+      expect(tools[name].title).toBeTruthy();
+    }
+  });
+
+  it("update_event is destructive; create_event is explicitly non-destructive", () => {
+    const tools = registerAllTools();
+    expect(tools.update_event.annotations?.destructiveHint).toBe(true);
+    // create_event must advertise destructiveHint:false EXPLICITLY — per MCP spec
+    // 2025-11-25, an omitted destructiveHint defaults to true when readOnlyHint is
+    // false, which would misrepresent an additive create as destructive.
+    expect(tools.create_event.annotations?.destructiveHint).toBe(false);
+  });
+});
+
+describe("tool descriptions advertise input semantics", () => {
+  it("get_events states recurring expansion and ISO8601 dates", () => {
+    const desc = registerAllTools().get_events.description.toLowerCase();
+    expect(desc).toMatch(/recurring|occurrence/);
+    expect(desc).toContain("iso8601");
+  });
+
+  it("create_event states the calendarId source and ISO8601 dates", () => {
+    const desc = registerAllTools().create_event.description.toLowerCase();
+    expect(desc).toContain("get_calendars");
+    expect(desc).toContain("iso8601");
+  });
+});
+
+describe("create_event recurrence schema", () => {
+  const base = {
+    calendarId: "C",
+    title: "Weekly sync",
+    startDate: "2026-07-01T10:00:00Z",
+    endDate: "2026-07-01T11:00:00Z",
+  };
+
+  it("defaults interval to 1 when omitted", () => {
+    const r = createSchema.safeParse({
+      ...base,
+      recurrence: { frequency: "weekly" },
+    });
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.recurrence?.interval).toBe(1);
+  });
+
+  it("accepts each frequency", () => {
+    for (const frequency of ["daily", "weekly", "monthly", "yearly"]) {
+      expect(
+        createEventSchema.safeParse({ ...base, recurrence: { frequency } })
+          .success
+      ).toBe(true);
+    }
+  });
+
+  it("rejects an unknown frequency", () => {
+    expect(
+      createSchema.safeParse({
+        ...base,
+        recurrence: { frequency: "fortnightly" },
+      }).success
+    ).toBe(false);
+  });
+
+  it("rejects interval <= 0", () => {
+    expect(
+      createSchema.safeParse({
+        ...base,
+        recurrence: { frequency: "weekly", interval: 0 },
+      }).success
+    ).toBe(false);
+    expect(
+      createSchema.safeParse({
+        ...base,
+        recurrence: { frequency: "weekly", interval: -2 },
+      }).success
+    ).toBe(false);
+  });
+
+  it("rejects endDate AND occurrenceCount together", () => {
+    const r = createEventSchema.safeParse({
+      ...base,
+      recurrence: {
+        frequency: "weekly",
+        endDate: "2026-12-31T00:00:00Z",
+        occurrenceCount: 10,
+      },
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      expect(r.error.issues[0].message.toLowerCase()).toMatch(
+        /either|not both|one/
+      );
+    }
+  });
+
+  it("accepts endDate alone and occurrenceCount alone", () => {
+    expect(
+      createEventSchema.safeParse({
+        ...base,
+        recurrence: { frequency: "weekly", endDate: "2026-12-31T00:00:00Z" },
+      }).success
+    ).toBe(true);
+    expect(
+      createEventSchema.safeParse({
+        ...base,
+        recurrence: { frequency: "weekly", occurrenceCount: 10 },
+      }).success
+    ).toBe(true);
+  });
+
+  it("accepts daysOfWeek for weekly recurrence", () => {
+    expect(
+      createEventSchema.safeParse({
+        ...base,
+        recurrence: { frequency: "weekly", daysOfWeek: ["MO", "WE", "FR"] },
+      }).success
+    ).toBe(true);
+  });
+
+  it("rejects daysOfWeek for non-weekly frequencies", () => {
+    for (const frequency of ["daily", "monthly", "yearly"]) {
+      const r = createEventSchema.safeParse({
+        ...base,
+        recurrence: { frequency, daysOfWeek: ["MO"] },
+      });
+      expect(r.success).toBe(false);
+    }
+  });
+
+  it("rejects an invalid weekday code", () => {
+    expect(
+      createSchema.safeParse({
+        ...base,
+        recurrence: { frequency: "weekly", daysOfWeek: ["XX"] },
+      }).success
+    ).toBe(false);
   });
 });

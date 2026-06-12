@@ -60,16 +60,21 @@ final class CalendarService {
         calendarNames: [String]? = nil,
         calendarIds: [String]? = nil
     ) -> [EventInfo] {
+        // Names and ids combine as a UNION: a calendar matches if its title is in
+        // `calendarNames` OR its identifier is in `calendarIds`. (Earlier this was
+        // names-XOR-ids — names won and ids were silently ignored when both were
+        // given — which disagreed with the tool advertising both as independent
+        // filters.) When neither is given, no calendar filter is applied.
         var calendars: [EKCalendar]? = nil
-
-        if let names = calendarNames, !names.isEmpty {
-            let allCalendars = store.calendars(for: .event)
-            let nameSet = Set(names.map { $0.lowercased() })
-            calendars = allCalendars.filter { nameSet.contains($0.title.lowercased()) }
-        } else if let ids = calendarIds, !ids.isEmpty {
-            let allCalendars = store.calendars(for: .event)
-            let idSet = Set(ids)
-            calendars = allCalendars.filter { idSet.contains($0.calendarIdentifier) }
+        let hasNames = !(calendarNames ?? []).isEmpty
+        let hasIds = !(calendarIds ?? []).isEmpty
+        if hasNames || hasIds {
+            let nameSet = Set((calendarNames ?? []).map { $0.lowercased() })
+            let idSet = Set(calendarIds ?? [])
+            calendars = store.calendars(for: .event).filter {
+                nameSet.contains($0.title.lowercased())
+                    || idSet.contains($0.calendarIdentifier)
+            }
         }
 
         let predicate = store.predicateForEvents(withStart: start, end: end, calendars: calendars)
@@ -95,7 +100,8 @@ final class CalendarService {
         timeZone: String? = nil,
         isAllDay: Bool = false,
         location: String? = nil,
-        notes: String? = nil
+        notes: String? = nil,
+        recurrence: RecurrenceSpec? = nil
     ) throws -> EventInfo {
         guard let calendar = store.calendar(withIdentifier: calendarId) else {
             throw BridgeError.calendarNotFound(calendarId)
@@ -115,6 +121,9 @@ final class CalendarService {
         }
         if let loc = location { event.location = loc }
         if let n = notes { event.notes = n }
+        if let spec = recurrence {
+            event.recurrenceRules = [recurrenceRule(from: spec)]
+        }
 
         try store.save(event, span: .thisEvent)
         return eventToInfo(event)
@@ -278,6 +287,56 @@ final class CalendarService {
     }
 
     // MARK: - Helpers
+
+    /// Map a validated, EventKit-free `RecurrenceSpec` to an `EKRecurrenceRule`.
+    private func recurrenceRule(from spec: RecurrenceSpec) -> EKRecurrenceRule {
+        let frequency: EKRecurrenceFrequency
+        switch spec.frequency {
+        case .daily: frequency = .daily
+        case .weekly: frequency = .weekly
+        case .monthly: frequency = .monthly
+        case .yearly: frequency = .yearly
+        }
+
+        let days: [EKRecurrenceDayOfWeek]? = spec.daysOfWeek.isEmpty
+            ? nil
+            : spec.daysOfWeek.map { EKRecurrenceDayOfWeek(ekWeekday(from: $0)) }
+
+        // EventKit recurrence-end semantics (RFC 5545): occurrenceCount counts
+        // the seed/first occurrence (count: 3 → seed + 2 repeats), and an end
+        // date is an inclusive instant (occurrences on/before it are kept). Both
+        // are surfaced verbatim to the client via the tool descriptions.
+        var end: EKRecurrenceEnd? = nil
+        if let count = spec.occurrenceCount {
+            end = EKRecurrenceEnd(occurrenceCount: count)
+        } else if let date = spec.endDate {
+            end = EKRecurrenceEnd(end: date)
+        }
+
+        return EKRecurrenceRule(
+            recurrenceWith: frequency,
+            interval: spec.interval,
+            daysOfTheWeek: days,
+            daysOfTheMonth: nil,
+            monthsOfTheYear: nil,
+            weeksOfTheYear: nil,
+            daysOfTheYear: nil,
+            setPositions: nil,
+            end: end
+        )
+    }
+
+    private func ekWeekday(from weekday: Weekday) -> EKWeekday {
+        switch weekday {
+        case .SU: return .sunday
+        case .MO: return .monday
+        case .TU: return .tuesday
+        case .WE: return .wednesday
+        case .TH: return .thursday
+        case .FR: return .friday
+        case .SA: return .saturday
+        }
+    }
 
     private func eventToInfo(_ event: EKEvent) -> EventInfo {
         EventInfo(

@@ -134,11 +134,52 @@ struct CreateEvent: AsyncParsableCommand {
     @Option(help: "Notes")
     var notes: String?
 
+    @Option(name: .customLong("recurrence-frequency"), help: "Recurrence frequency: daily/weekly/monthly/yearly")
+    var recurrenceFrequency: String?
+
+    @Option(name: .customLong("recurrence-interval"), help: "Recurrence interval (>= 1, default 1)")
+    var recurrenceInterval: Int?
+
+    @Option(name: .customLong("recurrence-end-date"), help: "Recurrence end date (ISO8601)")
+    var recurrenceEndDate: String?
+
+    @Option(name: .customLong("recurrence-count"), help: "Recurrence occurrence count (>= 1)")
+    var recurrenceCount: Int?
+
+    @Option(name: .customLong("recurrence-days"), parsing: .upToNextOption, help: "Weekly recurrence weekdays: MO TU WE TH FR SA SU")
+    var recurrenceDays: [String] = []
+
     func run() async {
         let service = CalendarService()
         do {
             let startDate = try parseISO8601(start)
             let endDate = try parseISO8601(end)
+            // Validate recurrence (and parse its end date) before requesting
+            // access, so bad recurrence input fails fast without touching TCC.
+            // Recurrence is active iff a frequency is given. Refuse orphaned
+            // sub-flags (interval/count/end-date/days without a frequency) rather
+            // than silently dropping the caller's recurrence intent on the
+            // direct-CLI path (the MCP arg builder always pairs them).
+            if recurrenceFrequency == nil
+                && (recurrenceInterval != nil
+                    || recurrenceCount != nil
+                    || recurrenceEndDate != nil
+                    || !recurrenceDays.isEmpty)
+            {
+                throw BridgeError.invalidInput(
+                    "Recurrence options (--recurrence-interval/--recurrence-count/--recurrence-end-date/--recurrence-days) require --recurrence-frequency."
+                )
+            }
+            let recurrence: RecurrenceSpec? = try recurrenceFrequency.map { freq in
+                let recEndDate = try recurrenceEndDate.map { try parseISO8601($0) }
+                return try RecurrenceValidation.makeSpec(
+                    frequency: freq,
+                    interval: recurrenceInterval,
+                    endDate: recEndDate,
+                    occurrenceCount: recurrenceCount,
+                    daysOfWeek: recurrenceDays
+                )
+            }
             try await service.requestAccess()
             let event = try service.createEvent(
                 calendarId: calendarId,
@@ -148,7 +189,8 @@ struct CreateEvent: AsyncParsableCommand {
                 timeZone: timeZone,
                 isAllDay: allDay,
                 location: location,
-                notes: notes
+                notes: notes,
+                recurrence: recurrence
             )
             printJSON(BridgeOutput.success(event))
         } catch {

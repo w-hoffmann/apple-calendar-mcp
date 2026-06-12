@@ -93,4 +93,34 @@ describe("SwiftBridge contract against the fake binary", () => {
       /exceeded the 1024-byte buffer limit/
     );
   });
+
+  it("passes create-event recurrence flags and returns the lean event shape", async () => {
+    setMode("ok");
+    const bridge = new SwiftBridge();
+    const event = await bridge.createEvent({
+      calendarId: "C1",
+      title: "Standup",
+      startDate: "2026-07-01T10:00:00Z",
+      endDate: "2026-07-01T11:00:00Z",
+      recurrence: { frequency: "weekly", interval: 2, daysOfWeek: ["MO"] },
+    });
+    // The fake echoes hasRecurrenceRules: true because --recurrence-frequency
+    // reached the binary. (Only the frequency flag is observably checked
+    // end-to-end here; the full interval/daysOfWeek arg mapping is covered
+    // structurally by buildCreateArgs in swift-args.test.ts.)
+    expect(event.hasRecurrenceRules).toBe(true);
+    expect(event.title).toBe("Standup");
+    expect(event.calendarId).toBe("C1");
+    // Lean mapping: dead-weight fields dropped, null optionals omitted.
+    expect("externalId" in event).toBe(false);
+    expect("isDetached" in event).toBe(false);
+    expect("timeZone" in event).toBe(false);
+    expect("location" in event).toBe(false);
+    expect("notes" in event).toBe(false);
+    expect("occurrenceDate" in event).toBe(false);
+    // Identity/operational fields always present.
+    expect(event.isAllDay).toBe(false);
+    expect(typeof event.startDate).toBe("string");
+    expect(typeof event.endDate).toBe("string");
+  });
 });

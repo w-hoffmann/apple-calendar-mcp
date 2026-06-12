@@ -79,16 +79,22 @@ claude mcp add --scope user apple-calendar \
 
 ## MCP Tools
 
-| Tool | Description |
-|------|-------------|
-| `get_calendars` | List all calendars with their IDs and colors |
-| `get_events` | Get events in a date range (properly expands recurring events) |
-| `get_today_events` | Get all of today's events |
-| `search_events` | Search events by title, location, or notes |
-| `create_event` | Create a new calendar event |
-| `update_event` | Update an existing event (reschedule, rename, move between calendars, edit location/notes) |
+| Tool | Description | Read/write |
+|------|-------------|------------|
+| `get_calendars` | List all calendars with their IDs and colors | read-only |
+| `get_events` | Get events in a date range (properly expands recurring events) | read-only |
+| `search_events` | Search events by title, location, or notes | read-only |
+| `find_free_slots` | Find free time gaps in a window (min duration, optional working hours + calendar filter) | read-only |
+| `create_event` | Create a new calendar event, optionally recurring | write |
+| `update_event` | Update an existing event (reschedule, rename, move between calendars, edit location/notes) | write (destructive) |
 
-The write tools validate input and return a clear error instead of failing silently: `create_event` and `update_event` reject an empty title, an inverted date range (start after end), and an invalid time-zone identifier; `update_event` also rejects an unknown `span` and conflicting all-day flags. All-day events may span a single day.
+Every tool advertises an MCP `title` and an honest `readOnlyHint` annotation so clients can tell reads from writes; `update_event` advertises `destructiveHint: true` (it overwrites existing state) and `create_event` advertises `destructiveHint: false` (additive). Event payloads are returned in a lean, token-efficient shape (compact JSON; null/empty optional fields omitted).
+
+`create_event` accepts an optional `recurrence` object — `frequency` (daily/weekly/monthly/yearly), `interval`, either `endDate` **or** `occurrenceCount` (not both), and a `daysOfWeek` list that applies to **weekly** recurrence only. `find_free_slots` is computed client-side from existing event data: timed events count as busy, all-day events do not, and working hours / day boundaries use the server's local timezone.
+
+The write tools validate input and return a clear error instead of failing silently: `create_event` and `update_event` reject an empty title, an inverted date range (start after end), and an invalid time-zone identifier; `update_event` also rejects an unknown `span` and conflicting all-day flags; `create_event` rejects an invalid recurrence (bad frequency, non-positive interval, `endDate` and `occurrenceCount` together, or `daysOfWeek` on a non-weekly frequency). All-day events may span a single day.
+
+> **Note:** `get_today_events` was removed — call `get_events` with a one-day range instead (construct the boundaries from the calendar day, e.g. `new Date(y, m, d)`, so DST transition days stay correct).
 
 ## Verification
 
@@ -99,7 +105,7 @@ swift/.build/release/apple-bridge doctor
 # List calendars
 swift/.build/release/apple-bridge calendars
 
-# Today's events
+# Today's events (Swift CLI smoke check; no longer an MCP tool — use get_events with a one-day range)
 swift/.build/release/apple-bridge today
 
 # Events in a date range (recurring events expanded)

@@ -1,13 +1,4 @@
-# Event Querying Specification
-
-## Purpose
-
-Let MCP clients read calendar events over a date range or by a text search.
-Recurring events are expanded into individual occurrences so that clients see
-real instances rather than a single rule. Backed by the `get_events` and
-`search_events` MCP tools.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Get events in a date range
 
@@ -46,37 +37,15 @@ the lean event payload shape defined by the `tool-conventions` capability.
 - **AND** the description states that `startDate`/`endDate` are ISO8601 and that
   an event's own time zone is reported in `timeZone` when set
 
-### Requirement: Search events by text
+## REMOVED Requirements
 
-The system SHALL search events by a text query via the `search_events` tool,
-matching against event title, location, and notes.
+### Requirement: Get today's events
 
-#### Scenario: Matching events are returned
+**Reason**: Redundant with `get_events` over a one-day range. The client already
+knows the current date, so a dedicated tool only adds a tool definition to the
+context without adding capability.
 
-- **WHEN** `search_events` is invoked with a `query`
-- **THEN** the system returns events whose `title`, `location`, or `notes`
-  contain the query as a case-insensitive substring
-
-#### Scenario: Tool advertises matched fields
-
-- **WHEN** the `search_events` tool and its `query` parameter are described to a
-  client
-- **THEN** both descriptions state that matching covers title, location, and
-  notes (not title alone)
-
-#### Scenario: Default search window
-
-- **WHEN** `search_events` is invoked without `startDate` or `endDate`
-- **THEN** the search window defaults to the start of the current day through 30
-  days from now
-
-### Requirement: Surface query failures
-
-The system SHALL propagate query failures rather than returning misleading data.
-
-#### Scenario: Bridge reports an error
-
-- **WHEN** a query tool is invoked and the bridge returns an error or times out
-- **THEN** the system returns a tool result flagged as an error
-- **AND** the error text describes the failure
-
+**Migration**: Call `get_events` with `startDate` at the start of the current
+day and `endDate` at the start of the next day in local time. Construct each
+boundary from the calendar day (e.g. `new Date(y, m, d)`), not by adding a fixed
+24 h offset, so that DST transition days (a 23 h or 25 h local day) stay correct.

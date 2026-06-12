@@ -79,6 +79,80 @@ describe("buildCreateArgs", () => {
       buildCreateArgs({ calendarId: "C", title: "T", startDate: "s", endDate: "e" })
     ).not.toContain("--all-day");
   });
+
+  it("emits no recurrence flags when recurrence is absent", () => {
+    const a = buildCreateArgs({
+      calendarId: "C",
+      title: "T",
+      startDate: "s",
+      endDate: "e",
+    });
+    expect(a.some((x) => x.startsWith("--recurrence"))).toBe(false);
+  });
+
+  it("emits weekly recurrence with interval and daysOfWeek", () => {
+    const a = buildCreateArgs({
+      calendarId: "C",
+      title: "T",
+      startDate: "s",
+      endDate: "e",
+      recurrence: { frequency: "weekly", interval: 2, daysOfWeek: ["MO", "WE"] },
+    });
+    expect(a).toEqual(
+      expect.arrayContaining([
+        "--recurrence-frequency",
+        "weekly",
+        "--recurrence-interval",
+        "2",
+        "--recurrence-days",
+        "MO",
+        "WE",
+      ])
+    );
+    // daysOfWeek values follow the --recurrence-days flag contiguously.
+    const i = a.indexOf("--recurrence-days");
+    expect(a.slice(i + 1, i + 3)).toEqual(["MO", "WE"]);
+    expect(a).not.toContain("--recurrence-end-date");
+    expect(a).not.toContain("--recurrence-count");
+  });
+
+  it("emits --recurrence-end-date for an endDate-bounded series", () => {
+    const a = buildCreateArgs({
+      calendarId: "C",
+      title: "T",
+      startDate: "s",
+      endDate: "e",
+      recurrence: { frequency: "daily", endDate: "2026-12-31T00:00:00Z" },
+    });
+    expect(a).toEqual(
+      expect.arrayContaining([
+        "--recurrence-frequency",
+        "daily",
+        "--recurrence-end-date",
+        "2026-12-31T00:00:00Z",
+      ])
+    );
+    expect(a).not.toContain("--recurrence-count");
+  });
+
+  it("emits --recurrence-count for an occurrence-bounded series", () => {
+    const a = buildCreateArgs({
+      calendarId: "C",
+      title: "T",
+      startDate: "s",
+      endDate: "e",
+      recurrence: { frequency: "monthly", occurrenceCount: 6 },
+    });
+    expect(a).toEqual(
+      expect.arrayContaining([
+        "--recurrence-frequency",
+        "monthly",
+        "--recurrence-count",
+        "6",
+      ])
+    );
+    expect(a).not.toContain("--recurrence-end-date");
+  });
 });
 
 describe("buildEventsArgs", () => {

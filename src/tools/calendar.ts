@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { SwiftBridge } from "../bridge/swift.js";
+import type { LeanEventInfo } from "../bridge/swift.js";
 
 // --- Shared helpers -------------------------------------------------------
 
@@ -9,11 +10,18 @@ function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-/** Run a bridge call and shape the result/error into a tool response. */
+/**
+ * Run a bridge call and shape the result/error into a tool response.
+ *
+ * Serialization is compact (`JSON.stringify` with no indentation) for every
+ * tool — not just the event tools — so `get_calendars` and `find_free_slots`
+ * are leaner too. One source of truth for output shape; the lean event payload
+ * is produced upstream in `swift.ts` (`toLeanEvent`).
+ */
 async function wrap(fn: () => Promise<unknown>): Promise<CallToolResult> {
   try {
     const data = await fn();
-    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+    return { content: [{ type: "text", text: JSON.stringify(data) }] };
   } catch (e) {
     return { content: [{ type: "text", text: errorText(e) }], isError: true };
   }
@@ -44,8 +52,44 @@ export const searchEventsInput = {
     .describe("End date (ISO8601, defaults to 30 days from now)"),
 };
 
+export const recurrenceInput = z
+  .object({
+    frequency: z
+      .enum(["daily", "weekly", "monthly", "yearly"])
+      .describe("Repeat frequency"),
+    interval: z
+      .number()
+      .int()
+      .min(1)
+      .default(1)
+      .describe("Repeat every N units of the frequency (>= 1, default 1)"),
+    endDate: z
+      .string()
+      .optional()
+      .describe(
+        "ISO8601 instant on/before which the series stops recurring (inclusive boundary). Mutually exclusive with occurrenceCount"
+      ),
+    occurrenceCount: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe(
+        "Total number of occurrences, counting the first/seed event (RFC 5545 COUNT semantics — occurrenceCount: 3 yields the seed plus 2 repeats). Mutually exclusive with endDate"
+      ),
+    daysOfWeek: z
+      .array(z.enum(["MO", "TU", "WE", "TH", "FR", "SA", "SU"]))
+      .optional()
+      .describe(
+        "Weekday codes the series repeats on. Applies to frequency 'weekly' only; rejected for other frequencies"
+      ),
+  })
+  .describe(
+    "Optional recurrence rule. Omit for a single non-recurring event. Provide either endDate or occurrenceCount, not both."
+  );
+
 export const createEventInput = {
-  calendarId: z.string().describe("Calendar ID"),
+  calendarId: z.string().describe("Calendar ID (from get_calendars)"),
   title: z.string().min(1).describe("Event title"),
   startDate: z.string().describe("Start date (ISO8601)"),
   endDate: z.string().describe("End date (ISO8601)"),
@@ -53,7 +97,36 @@ export const createEventInput = {
   allDay: z.boolean().optional().describe("All-day event"),
   location: z.string().optional().describe("Event location"),
   notes: z.string().optional().describe("Event notes"),
+  recurrence: recurrenceInput.optional(),
 };
+
+// Cross-field validation for create_event's recurrence, co-located here (mirrors
+// updateEventSchema): `endDate` XOR `occurrenceCount`, and `daysOfWeek` only for
+// weekly recurrence. As with update_event, the tool is registered with the raw
+// `createEventInput` shape (full discoverability under the pinned SDK, which
+// reads `.shape`) and this refine runs in the handler. Swift re-checks the same
+// rules authoritatively for the direct-CLI path.
+export const createEventSchema = z
+  .object(createEventInput)
+  .superRefine((val, ctx) => {
+    const r = val.recurrence;
+    if (!r) return;
+    if (r.endDate !== undefined && r.occurrenceCount !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "Recurrence may specify either endDate or occurrenceCount, not both.",
+        path: ["recurrence"],
+      });
+    }
+    if (r.daysOfWeek !== undefined && r.frequency !== "weekly") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "daysOfWeek applies to weekly recurrence only.",
+        path: ["recurrence", "daysOfWeek"],
+      });
+    }
+  });
 
 export const updateEventInput = {
   eventId: z.string().describe("Event ID"),
@@ -154,6 +227,192 @@ export function getDefaultSearchWindow(): {
   return { startDate, endDate };
 }
 
+// --- find_free_slots (input schema + pure computation) --------------------
+
+const HHMM = z
+  .string()
+  .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Expected HH:MM (24-hour)");
+
+export const findFreeSlotsInput = {
+  startDate: z.string().describe("Window start (ISO8601)"),
+  endDate: z.string().describe("Window end (ISO8601)"),
+  minDurationMinutes: z
+    .number()
+    .int()
+    .positive()
+    .default(30)
+    .describe("Minimum free-slot length in minutes (default 30)"),
+  workingHours: z
+    .object({
+      start: HHMM.describe("Start of working hours, HH:MM (server-local time)"),
+      end: HHMM.describe("End of working hours, HH:MM (server-local time)"),
+    })
+    .optional()
+    .describe(
+      "Restrict slots to these hours on each local day. Interpreted in the server's local timezone"
+    ),
+  calendars: z
+    .array(z.string())
+    .optional()
+    .describe("Only treat events from these calendar names as busy"),
+  calendarIds: z
+    .array(z.string())
+    .optional()
+    .describe("Only treat events from these calendar IDs as busy"),
+};
+
+/** Minutes since local midnight for an `HH:MM` string (validated by `HHMM`). */
+function hhmmToMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(":").map(Number);
+  return h * 60 + m;
+}
+
+// Cross-field validation for find_free_slots: working hours must be a forward
+// range (end after start). Without this, an inverted/equal `workingHours`
+// (e.g. a typo `{ start: "17:00", end: "09:00" }`) silently clips every day to
+// nothing and the tool returns `[]` — indistinguishable from a fully booked
+// window. Co-located here and re-checked in the handler, mirroring
+// updateEventSchema/createEventSchema (the raw shape stays the advertised
+// inputSchema so the SDK exposes all properties).
+export const findFreeSlotsSchema = z
+  .object(findFreeSlotsInput)
+  .superRefine((val, ctx) => {
+    const wh = val.workingHours;
+    if (wh && hhmmToMinutes(wh.end) <= hhmmToMinutes(wh.start)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "workingHours.end must be later than workingHours.start (overnight ranges are not supported).",
+        path: ["workingHours", "end"],
+      });
+    }
+  });
+
+export interface FreeSlot {
+  start: string;
+  end: string;
+}
+
+export interface ComputeFreeSlotsOpts {
+  startDate: string;
+  endDate: string;
+  minDurationMinutes?: number;
+  workingHours?: { start: string; end: string };
+  calendars?: string[];
+  calendarIds?: string[];
+}
+
+interface Interval {
+  start: number;
+  end: number;
+}
+
+/**
+ * Clip free intervals to `workingHours` (HH:MM, server-local time) on each local
+ * day they span. Day boundaries are built from local calendar components
+ * (`new Date(y, m, d, hh, mm)`), so DST transition days stay correct — no slot is
+ * invented; working-hours edges follow the real local clock.
+ */
+function clipToWorkingHours(
+  free: Interval[],
+  wh: { start: string; end: string }
+): Interval[] {
+  const [wsH, wsM] = wh.start.split(":").map(Number);
+  const [weH, weM] = wh.end.split(":").map(Number);
+  const out: Interval[] = [];
+  for (const slot of free) {
+    const first = new Date(slot.start);
+    let day = new Date(first.getFullYear(), first.getMonth(), first.getDate());
+    while (day.getTime() < slot.end) {
+      const y = day.getFullYear();
+      const m = day.getMonth();
+      const d = day.getDate();
+      const whStart = new Date(y, m, d, wsH, wsM, 0, 0).getTime();
+      const whEnd = new Date(y, m, d, weH, weM, 0, 0).getTime();
+      const s = Math.max(slot.start, whStart);
+      const e = Math.min(slot.end, whEnd);
+      if (e > s) out.push({ start: s, end: e });
+      day = new Date(y, m, d + 1);
+    }
+  }
+  return out;
+}
+
+/**
+ * Pure free-slot computation over already-fetched events. Timed events are busy;
+ * all-day events never block. Busy intervals are clipped to the window (boundary-
+ * straddling events block only their in-window portion), zero-length events are
+ * dropped, overlapping AND touching/back-to-back intervals are merged, the result
+ * is inverted within the window, optionally clipped to working hours per local
+ * day, and slots shorter than the minimum are dropped. A fully booked window
+ * yields `[]`.
+ */
+export function computeFreeSlots(
+  events: LeanEventInfo[],
+  opts: ComputeFreeSlotsOpts
+): FreeSlot[] {
+  const windowStart = new Date(opts.startDate).getTime();
+  const windowEnd = new Date(opts.endDate).getTime();
+  if (!(windowEnd > windowStart)) return [];
+  const minMs = (opts.minDurationMinutes ?? 30) * 60_000;
+
+  const nameSet = opts.calendars?.length
+    ? new Set(opts.calendars.map((c) => c.toLowerCase()))
+    : null;
+  const idSet = opts.calendarIds?.length ? new Set(opts.calendarIds) : null;
+  const filterActive = nameSet !== null || idSet !== null;
+
+  const busy: Interval[] = [];
+  for (const e of events) {
+    if (e.isAllDay) continue; // all-day events don't occupy timed availability
+    if (filterActive) {
+      const matches =
+        (nameSet?.has(e.calendarTitle.toLowerCase()) ?? false) ||
+        (idSet?.has(e.calendarId) ?? false);
+      if (!matches) continue;
+    }
+    const s = Math.max(new Date(e.startDate).getTime(), windowStart);
+    const en = Math.min(new Date(e.endDate).getTime(), windowEnd);
+    // Skip unparseable dates (NaN) too: `NaN <= s` is false, so the bare
+    // `en <= s` guard would let a NaN interval through and later crash on
+    // `new Date(NaN).toISOString()`. Defensive — the Swift bridge always emits
+    // valid ISO8601, but computeFreeSlots is exported and unit-tested directly.
+    if (!Number.isFinite(s) || !Number.isFinite(en) || en <= s) continue;
+    busy.push({ start: s, end: en });
+  }
+
+  busy.sort((a, b) => a.start - b.start);
+  const merged: Interval[] = [];
+  for (const iv of busy) {
+    const last = merged[merged.length - 1];
+    // `<=` merges touching/back-to-back intervals, not just overlapping ones.
+    if (last && iv.start <= last.end) {
+      last.end = Math.max(last.end, iv.end);
+    } else {
+      merged.push({ ...iv });
+    }
+  }
+
+  const free: Interval[] = [];
+  let cursor = windowStart;
+  for (const b of merged) {
+    if (b.start > cursor) free.push({ start: cursor, end: b.start });
+    cursor = Math.max(cursor, b.end);
+  }
+  if (cursor < windowEnd) free.push({ start: cursor, end: windowEnd });
+
+  const constrained = opts.workingHours
+    ? clipToWorkingHours(free, opts.workingHours)
+    : free;
+
+  return constrained
+    .filter((s) => s.end - s.start >= minMs)
+    .map((s) => ({
+      start: new Date(s.start).toISOString(),
+      end: new Date(s.end).toISOString(),
+    }));
+}
+
 // --- Tool registration ----------------------------------------------------
 
 export function registerCalendarTools(
@@ -162,7 +421,11 @@ export function registerCalendarTools(
 ): void {
   server.registerTool(
     "get_calendars",
-    { title: "List calendars", description: "List all calendars" },
+    {
+      title: "List calendars",
+      description: "List all calendars",
+      annotations: { readOnlyHint: true },
+    },
     async () => wrap(() => bridge.calendars())
   );
 
@@ -170,8 +433,10 @@ export function registerCalendarTools(
     "get_events",
     {
       title: "Get events",
-      description: "Get events in a date range (expands recurring events)",
+      description:
+        "Get events in a date range. Recurring events are expanded into individual occurrences (each carries its own occurrenceDate). startDate/endDate are ISO8601; an event's own time zone is reported in timeZone when set. Optional calendars (names) and calendarIds combine as a union — an event is returned if it matches either filter.",
       inputSchema: getEventsInput,
+      annotations: { readOnlyHint: true },
     },
     async (args) =>
       wrap(() =>
@@ -185,18 +450,13 @@ export function registerCalendarTools(
   );
 
   server.registerTool(
-    "get_today_events",
-    { title: "Today's events", description: "Get all events for today" },
-    async () => wrap(() => bridge.today())
-  );
-
-  server.registerTool(
     "search_events",
     {
       title: "Search events",
       description:
         "Search events by title, location, or notes (client-side substring filtering)",
       inputSchema: searchEventsInput,
+      annotations: { readOnlyHint: true },
     },
     async (args) =>
       wrap(async () => {
@@ -216,15 +476,70 @@ export function registerCalendarTools(
   );
 
   server.registerTool(
+    "find_free_slots",
+    {
+      title: "Find free time",
+      description:
+        "Find free time gaps within an ISO8601 startDate/endDate window. Timed events count as busy; all-day events do not block. minDurationMinutes (default 30) omits shorter gaps. Optional workingHours ({ start, end } as HH:MM) and a calendar filter (calendars names and/or calendarIds — an event is busy if it matches either) constrain busy time; working hours and day boundaries use the server's local timezone. Returns an array of { start, end } (ISO8601); an empty array means no free slot (e.g. a fully booked window).",
+      inputSchema: findFreeSlotsInput,
+      annotations: { readOnlyHint: true },
+    },
+    async (args) =>
+      wrap(() => {
+        // Enforce findFreeSlotsSchema's refine (workingHours end > start) here,
+        // since the advertised inputSchema is the un-refined raw shape.
+        const parsed = findFreeSlotsSchema.safeParse(args);
+        if (!parsed.success) {
+          throw new Error(
+            parsed.error.issues[0]?.message ?? "Invalid find_free_slots arguments"
+          );
+        }
+        // Fetch the FULL window (no calendar filter at the bridge) and let
+        // computeFreeSlots own the names-OR-ids union. Filtering lives in exactly
+        // one place — the pure, unit-tested computeFreeSlots — rather than being
+        // split across the TS and Swift layers.
+        return bridge
+          .events({ startDate: args.startDate, endDate: args.endDate })
+          .then((events) =>
+            computeFreeSlots(events, {
+              startDate: args.startDate,
+              endDate: args.endDate,
+              minDurationMinutes: args.minDurationMinutes,
+              workingHours: args.workingHours,
+              calendars: args.calendars,
+              calendarIds: args.calendarIds,
+            })
+          );
+      })
+  );
+
+  server.registerTool(
     "create_event",
     {
       title: "Create event",
-      description: "Create a new calendar event",
+      description:
+        "Create a new calendar event. calendarId comes from get_calendars; startDate/endDate are ISO8601. Pass an optional recurrence object (frequency daily/weekly/monthly/yearly, interval, and either endDate or occurrenceCount; daysOfWeek applies to weekly only) to create a repeating event in one call.",
+      // Raw shape (not createEventSchema) so the SDK advertises all properties +
+      // descriptions; the recurrence cross-field refine runs in the handler below.
       inputSchema: createEventInput,
+      // Additive write: advertise destructiveHint FALSE explicitly. Per MCP spec
+      // 2025-11-25, destructiveHint defaults to true when readOnlyHint is false,
+      // so omitting it would make a spec-compliant client treat create as
+      // destructive — the opposite of intent. update_event keeps true.
+      annotations: { readOnlyHint: false, destructiveHint: false },
     },
     async (args) =>
-      wrap(() =>
-        bridge.createEvent({
+      wrap(() => {
+        // Enforce createEventSchema's refine (endDate XOR occurrenceCount;
+        // daysOfWeek weekly-only) here, since the advertised inputSchema is the
+        // un-refined raw shape. Single source of truth for the rule.
+        const parsed = createEventSchema.safeParse(args);
+        if (!parsed.success) {
+          throw new Error(
+            parsed.error.issues[0]?.message ?? "Invalid create_event arguments"
+          );
+        }
+        return bridge.createEvent({
           calendarId: args.calendarId,
           title: args.title,
           startDate: args.startDate,
@@ -233,8 +548,9 @@ export function registerCalendarTools(
           allDay: args.allDay,
           location: args.location,
           notes: args.notes,
-        })
-      )
+          recurrence: args.recurrence,
+        });
+      })
   );
 
   server.registerTool(
@@ -246,6 +562,8 @@ export function registerCalendarTools(
       // Raw shape (not updateEventSchema) so the SDK advertises all properties +
       // descriptions; the cross-field refine runs in the handler below.
       inputSchema: updateEventInput,
+      // Overwrites existing event state, so it is non-read-only AND destructive.
+      annotations: { readOnlyHint: false, destructiveHint: true },
     },
     async (args) =>
       wrap(() => {

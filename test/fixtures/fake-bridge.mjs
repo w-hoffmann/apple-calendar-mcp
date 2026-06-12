@@ -16,7 +16,37 @@ const mode = process.env.FAKE_BRIDGE_MODE ?? "ok";
 
 switch (mode) {
   case "ok": {
-    // Shape copied from `apple-bridge calendars` (CalendarInfo[]).
+    // `create-event` echoes a full EventInfo reflecting its flags, so the bridge
+    // contract test can exercise the new recurrence flags AND the lean mapper
+    // end-to-end (externalId/isDetached/null fields are stripped/omitted in TS).
+    if (process.argv[2] === "create-event") {
+      const argv = process.argv.slice(3);
+      const opt = (flag) => {
+        const i = argv.indexOf(flag);
+        return i >= 0 ? argv[i + 1] : undefined;
+      };
+      const has = (flag) => argv.includes(flag);
+      const event = {
+        id: "FAKE-EVT-1",
+        externalId: "FAKE-EXT-1",
+        calendarId: opt("--calendar-id") ?? "FAKE-CAL-1",
+        calendarTitle: "Fake Calendar",
+        title: opt("--title") ?? "(no title)",
+        startDate: opt("--start") ?? "2026-07-01T10:00:00.000Z",
+        endDate: opt("--end") ?? "2026-07-01T11:00:00.000Z",
+        timeZone: opt("--time-zone") ?? null,
+        isAllDay: has("--all-day"),
+        // A recurrence is present iff a frequency flag was passed.
+        hasRecurrenceRules: opt("--recurrence-frequency") !== undefined,
+        occurrenceDate: null,
+        isDetached: false,
+        location: opt("--location") ?? null,
+        notes: opt("--notes") ?? null,
+      };
+      process.stdout.write(JSON.stringify({ status: "ok", data: event }) + "\n");
+      break;
+    }
+    // Default (calendars/events/etc.): shape copied from `apple-bridge calendars`.
     const data = [
       {
         id: "FAKE-CAL-1",

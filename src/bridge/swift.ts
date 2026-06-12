@@ -30,6 +30,48 @@ export interface EventInfo {
   notes: string | null;
 }
 
+/**
+ * Client-facing event shape: lean and token-efficient. Drops `isDetached` and
+ * `externalId` (neither is actionable for a client — `externalId` stays internal
+ * to Swift occurrence matching), and omits `occurrenceDate`/`timeZone`/`location`/
+ * `notes` entirely when they have no value (absent = not set). The identity and
+ * operational fields are always present, so the client never has to guess about
+ * `isAllDay`/`hasRecurrenceRules`.
+ */
+export interface LeanEventInfo {
+  id: string;
+  calendarId: string;
+  calendarTitle: string;
+  title: string;
+  startDate: string;
+  endDate: string;
+  isAllDay: boolean;
+  hasRecurrenceRules: boolean;
+  occurrenceDate?: string;
+  timeZone?: string;
+  location?: string;
+  notes?: string;
+}
+
+/** Map the full bridge `EventInfo` to the lean client-facing shape. */
+export function toLeanEvent(e: EventInfo): LeanEventInfo {
+  const lean: LeanEventInfo = {
+    id: e.id,
+    calendarId: e.calendarId,
+    calendarTitle: e.calendarTitle,
+    title: e.title,
+    startDate: e.startDate,
+    endDate: e.endDate,
+    isAllDay: e.isAllDay,
+    hasRecurrenceRules: e.hasRecurrenceRules,
+  };
+  if (e.occurrenceDate != null) lean.occurrenceDate = e.occurrenceDate;
+  if (e.timeZone != null) lean.timeZone = e.timeZone;
+  if (e.location != null) lean.location = e.location;
+  if (e.notes != null) lean.notes = e.notes;
+  return lean;
+}
+
 export interface DiagnosticsInfo {
   calendarAccess: string;
   calendarCount: number;
@@ -50,6 +92,14 @@ export interface EventsOpts {
   calendarIds?: string[];
 }
 
+export interface RecurrenceOpts {
+  frequency: "daily" | "weekly" | "monthly" | "yearly";
+  interval?: number;
+  endDate?: string;
+  occurrenceCount?: number;
+  daysOfWeek?: string[];
+}
+
 export interface CreateEventOpts {
   calendarId: string;
   title: string;
@@ -59,6 +109,7 @@ export interface CreateEventOpts {
   allDay?: boolean;
   location?: string;
   notes?: string;
+  recurrence?: RecurrenceOpts;
 }
 
 export interface UpdateEventOpts {
@@ -100,6 +151,18 @@ export function buildCreateArgs(opts: CreateEventOpts): string[] {
   if (opts.allDay) args.push("--all-day");
   if (opts.location) args.push("--location", opts.location);
   if (opts.notes) args.push("--notes", opts.notes);
+  if (opts.recurrence) {
+    const r = opts.recurrence;
+    args.push("--recurrence-frequency", r.frequency);
+    if (r.interval !== undefined)
+      args.push("--recurrence-interval", String(r.interval));
+    if (r.endDate !== undefined)
+      args.push("--recurrence-end-date", r.endDate);
+    if (r.occurrenceCount !== undefined)
+      args.push("--recurrence-count", String(r.occurrenceCount));
+    if (r.daysOfWeek?.length)
+      args.push("--recurrence-days", ...r.daysOfWeek);
+  }
   return args;
 }
 
@@ -198,19 +261,19 @@ export class SwiftBridge {
     return this.exec<CalendarInfo[]>(["calendars"]);
   }
 
-  async events(opts: EventsOpts): Promise<EventInfo[]> {
-    return this.exec<EventInfo[]>(buildEventsArgs(opts));
+  // All event-returning paths emit the lean client-facing shape; the internal
+  // full `EventInfo` (with `externalId`) is parsed first and never leaves here,
+  // so Swift's occurrence matching is unaffected.
+  async events(opts: EventsOpts): Promise<LeanEventInfo[]> {
+    const events = await this.exec<EventInfo[]>(buildEventsArgs(opts));
+    return events.map(toLeanEvent);
   }
 
-  async today(): Promise<EventInfo[]> {
-    return this.exec<EventInfo[]>(["today"]);
+  async createEvent(opts: CreateEventOpts): Promise<LeanEventInfo> {
+    return toLeanEvent(await this.exec<EventInfo>(buildCreateArgs(opts)));
   }
 
-  async createEvent(opts: CreateEventOpts): Promise<EventInfo> {
-    return this.exec<EventInfo>(buildCreateArgs(opts));
-  }
-
-  async updateEvent(opts: UpdateEventOpts): Promise<EventInfo> {
-    return this.exec<EventInfo>(buildUpdateArgs(opts));
+  async updateEvent(opts: UpdateEventOpts): Promise<LeanEventInfo> {
+    return toLeanEvent(await this.exec<EventInfo>(buildUpdateArgs(opts)));
   }
 }
