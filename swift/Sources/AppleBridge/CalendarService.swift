@@ -352,7 +352,7 @@ final class CalendarService {
             hasRecurrenceRules: event.hasRecurrenceRules,
             // occurrenceDate is a `null_unspecified Date!` (IUO); map over it instead
             // of force-unwrapping so a nil slot serializes as null rather than trapping.
-            occurrenceDate: event.occurrenceDate.map(formatISO8601),
+            occurrenceDate: event.occurrenceDate.map { formatISO8601($0) },
             isDetached: event.isDetached,
             location: event.location,
             notes: event.notes

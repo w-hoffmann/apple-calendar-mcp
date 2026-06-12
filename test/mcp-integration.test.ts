@@ -109,10 +109,16 @@ describe("MCP integration via InMemoryTransport", () => {
     expect(content[0].text).not.toMatch(/\n/);
     const slots = JSON.parse(content[0].text);
     expect(Array.isArray(slots)).toBe(true);
-    expect(slots[0]).toEqual({
-      start: "2026-07-01T09:00:00.000Z",
-      end: "2026-07-01T17:00:00.000Z",
-    });
+    // Slot timestamps now carry the SERVER-LOCAL offset (mirroring the Swift
+    // bridge), so the exact string is timezone-dependent — assert on the parsed
+    // instant, which is CI-stable. (The local-offset format itself is asserted in
+    // free-slots.test.ts.)
+    expect(new Date(slots[0].start).getTime()).toBe(
+      new Date("2026-07-01T09:00:00Z").getTime()
+    );
+    expect(new Date(slots[0].end).getTime()).toBe(
+      new Date("2026-07-01T17:00:00Z").getTime()
+    );
     expect(bridge.calls.map((c) => c.method)).toContain("events");
   });
 
@@ -137,6 +143,39 @@ describe("MCP integration via InMemoryTransport", () => {
     const passed = eventsCall!.args as Record<string, unknown>;
     expect(passed.calendars).toBeUndefined();
     expect(passed.calendarIds).toBeUndefined();
+  });
+
+  it("canonicalizes a date-only window to local midnight through the handler", async () => {
+    // The reason find_free_slots canonicalizes at all: a date-only value is
+    // UTC-midnight on the JS (computeFreeSlots) side but local-midnight at the
+    // bridge. The handler must append T00:00:00 ONCE and feed the SAME string to
+    // both bridge.events() and computeFreeSlots(), so the events fetched and the
+    // inversion window share a boundary (no offset shift). This exercises that
+    // wiring end-to-end — the helpers are unit-tested in free-slots.test.ts, but
+    // the handler is what threads them together.
+    const bridge = makeFakeBridge(); // events() returns [] → whole window free
+    const client = await linkClient(bridge);
+    const res = await client.callTool({
+      name: "find_free_slots",
+      arguments: { startDate: "2026-07-01", endDate: "2026-07-02" },
+    });
+    expect(res.isError).toBeFalsy();
+    // The bridge was asked for the canonicalized (naive local-midnight) window,
+    // NOT the raw date-only strings.
+    const eventsCall = bridge.calls.find((c) => c.method === "events");
+    expect(eventsCall).toBeDefined();
+    const passed = eventsCall!.args as Record<string, unknown>;
+    expect(passed.startDate).toBe("2026-07-01T00:00:00");
+    expect(passed.endDate).toBe("2026-07-02T00:00:00");
+    // And the returned slot aligns with the LOCAL day boundary (not UTC-shifted).
+    const slots = JSON.parse((res.content as { text: string }[])[0].text);
+    expect(slots.length).toBe(1);
+    expect(new Date(slots[0].start).getTime()).toBe(
+      new Date(2026, 6, 1, 0, 0, 0, 0).getTime()
+    );
+    expect(new Date(slots[0].end).getTime()).toBe(
+      new Date(2026, 6, 2, 0, 0, 0, 0).getTime()
+    );
   });
 
   it("find_free_slots surfaces an underlying read failure as an error result", async () => {

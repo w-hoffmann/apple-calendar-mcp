@@ -27,13 +27,18 @@ The tool SHALL accept an optional minimum slot duration `minDurationMinutes`
 e.g. `{ start: "09:00", end: "17:00" }`), and an optional calendar filter
 (`calendars` names and/or `calendarIds`); when any is omitted, no constraint of
 that kind is applied. Day boundaries and working hours are interpreted in the
-server's local timezone (there is no timezone parameter).
+server's local timezone (there is no timezone parameter). Date arguments and
+emitted slot timestamps follow the cross-cutting date contract of the
+`tool-conventions` capability: a date-only window resolves to local midnight (so
+the inverted window matches the events the bridge returns), and slot
+`start`/`end` carry the server-local UTC offset.
 
 #### Scenario: Free slots are returned
 
 - **WHEN** `find_free_slots` is invoked with ISO8601 `startDate` and `endDate`
 - **THEN** the system returns a JSON array of free slots
-- **AND** each slot includes its `start` and `end` (ISO8601)
+- **AND** each slot includes its `start` and `end`, serialized with the
+  server-local UTC offset (an exact-UTC instant may render as `Z`)
 - **AND** no returned slot overlaps a timed event in the window
 
 #### Scenario: Overlapping events are merged before computing gaps

@@ -95,10 +95,16 @@ The slot-matching decision SHALL be a pure function over plain value types
 `EKEvent` to those value types MAY remain a thin, untested shim outside
 the library.
 
-#### Scenario: ISO8601 parsing accepts both supported formats
+#### Scenario: Lenient date parsing and local-offset output are unit-tested
 
-- **WHEN** a date string with or without fractional seconds is parsed
-- **THEN** parsing succeeds and round-trips to the expected instant
+- **WHEN** the `AppleBridgeCore` date tests run
+- **THEN** parsing is covered for an explicit offset (resolved to the exact
+  instant), a naive datetime (with or without fractional seconds and the
+  minute-only `HH:mm` form, resolved in the injected zone), and a date-only
+  value (local midnight), plus rejection of genuinely invalid or out-of-range
+  input
+- **AND** formatting is covered for the server-local UTC offset output (rendering
+  `Z` only for a UTC zone) and its round-trip back to the same instant
 
 #### Scenario: Envelope encoding matches the CLI contract
 

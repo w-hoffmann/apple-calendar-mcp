@@ -148,12 +148,19 @@ defined by the `tool-conventions` capability.
 ### Requirement: Describe creation inputs to clients
 
 The `create_event` tool description SHALL state that `calendarId` is obtained
-from `get_calendars` and that `startDate`/`endDate` are ISO8601, so a client can
-form a valid call without guessing input formats or ID sources.
+from `get_calendars` and SHALL describe the date contract for
+`startDate`/`endDate` per the `tool-conventions` capability — local wall-clock by
+default, an explicit timezone offset honored, a date-only value allowed, and
+returned timestamps carrying the local UTC offset — so a client can form a valid
+call without guessing input formats or ID sources.
 
 #### Scenario: Tool advertises calendarId source and date format
 
 - **WHEN** the `create_event` tool is described to a client
 - **THEN** the description states that `calendarId` comes from `get_calendars`
-- **AND** the description states that `startDate`/`endDate` are ISO8601
+- **AND** the description states that `startDate`/`endDate` accept local
+  wall-clock time by default, that an explicit timezone offset is honored, and
+  that a date-only value is read as local midnight
+- **AND** the description states that returned timestamps carry the local UTC
+  offset
 

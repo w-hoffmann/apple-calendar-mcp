@@ -306,16 +306,34 @@ describe("tool surface: annotations, titles, and presence", () => {
 });
 
 describe("tool descriptions advertise input semantics", () => {
-  it("get_events states recurring expansion and ISO8601 dates", () => {
+  it("get_events states recurring expansion and local date semantics", () => {
     const desc = registerAllTools().get_events.description.toLowerCase();
     expect(desc).toMatch(/recurring|occurrence/);
-    expect(desc).toContain("iso8601");
+    // Lenient, local-default date semantics replace the bare "ISO8601" wording:
+    // local wall-clock default, explicit offset honored, date-only allowed.
+    expect(desc).toContain("local");
+    expect(desc).toContain("offset");
+    expect(desc).toContain("date-only");
+    // Names the resolved server-local timezone so the model knows which zone
+    // "local" means (injected at registration via Intl).
+    expect(desc).toContain(
+      Intl.DateTimeFormat().resolvedOptions().timeZone.toLowerCase()
+    );
   });
 
-  it("create_event states the calendarId source and ISO8601 dates", () => {
+  it("create_event states the calendarId source and local date semantics", () => {
     const desc = registerAllTools().create_event.description.toLowerCase();
     expect(desc).toContain("get_calendars");
-    expect(desc).toContain("iso8601");
+    // Aligned with get_events/find_free_slots: the bare "ISO8601" hint was
+    // replaced by the lenient local-default / offset-honored / date-only contract.
+    expect(desc).toContain("local");
+    expect(desc).toContain("date-only");
+  });
+
+  it("update_event advertises the local date contract too", () => {
+    const desc = registerAllTools().update_event.description.toLowerCase();
+    expect(desc).toContain("local");
+    expect(desc).toContain("date-only");
   });
 });
 

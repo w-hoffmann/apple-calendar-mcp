@@ -1,13 +1,4 @@
-# Event Querying Specification
-
-## Purpose
-
-Let MCP clients read calendar events over a date range or by a text search.
-Recurring events are expanded into individual occurrences so that clients see
-real instances rather than a single rule. Backed by the `get_events` and
-`search_events` MCP tools.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Get events in a date range
 
@@ -50,38 +41,3 @@ including its lenient date-input parsing and local-offset timestamp output.
 - **AND** the description names the user's resolved server-local timezone
 - **AND** the description states that returned timestamps carry the local UTC
   offset and that an event's own time zone is reported in `timeZone` when set
-
-### Requirement: Search events by text
-
-The system SHALL search events by a text query via the `search_events` tool,
-matching against event title, location, and notes.
-
-#### Scenario: Matching events are returned
-
-- **WHEN** `search_events` is invoked with a `query`
-- **THEN** the system returns events whose `title`, `location`, or `notes`
-  contain the query as a case-insensitive substring
-
-#### Scenario: Tool advertises matched fields
-
-- **WHEN** the `search_events` tool and its `query` parameter are described to a
-  client
-- **THEN** both descriptions state that matching covers title, location, and
-  notes (not title alone)
-
-#### Scenario: Default search window
-
-- **WHEN** `search_events` is invoked without `startDate` or `endDate`
-- **THEN** the search window defaults to the start of the current day through 30
-  days from now
-
-### Requirement: Surface query failures
-
-The system SHALL propagate query failures rather than returning misleading data.
-
-#### Scenario: Bridge reports an error
-
-- **WHEN** a query tool is invoked and the bridge returns an error or times out
-- **THEN** the system returns a tool result flagged as an error
-- **AND** the error text describes the failure
-

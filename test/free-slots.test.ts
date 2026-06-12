@@ -5,9 +5,21 @@ import {
   findFreeSlotsInput,
   findFreeSlotsSchema,
   computeFreeSlots,
+  canonicalizeDateArg,
+  formatLocalISO,
 } from "../build/tools/calendar.js";
 
 const findSchema = z.object(findFreeSlotsInput);
+
+// computeFreeSlots now emits slot timestamps with the SERVER-LOCAL offset
+// (mirroring the Swift bridge), not a UTC `Z`. The exact string is therefore
+// timezone-dependent and the suite pins TZ=America/New_York, so assert on the
+// parsed INSTANT (timezone-independent, CI-stable) rather than the literal
+// string. The local-offset *format* is asserted separately in the
+// "formatLocalISO" describe block below.
+const instant = (s: string) => new Date(s).getTime();
+const instants = (slots: { start: string; end: string }[]) =>
+  slots.map((s) => ({ start: instant(s.start), end: instant(s.end) }));
 
 // Minimal LeanEventInfo-shaped event factory. Defaults to a timed event in
 // calendar "Home"; tests override startDate/endDate/isAllDay/calendar as needed.
@@ -111,8 +123,8 @@ describe("findFreeSlotsSchema (refined: working-hours range)", () => {
 describe("computeFreeSlots", () => {
   it("returns the whole window free when there are no events", () => {
     const slots = computeFreeSlots([], WINDOW);
-    expect(slots).toEqual([
-      { start: "2026-07-01T09:00:00.000Z", end: "2026-07-01T17:00:00.000Z" },
+    expect(instants(slots)).toEqual([
+      { start: instant("2026-07-01T09:00:00Z"), end: instant("2026-07-01T17:00:00Z") },
     ]);
   });
 
@@ -126,9 +138,9 @@ describe("computeFreeSlots", () => {
       WINDOW
     );
     // Busy 10:00–12:00 collapses to one block → two free gaps around it.
-    expect(slots).toEqual([
-      { start: "2026-07-01T09:00:00.000Z", end: "2026-07-01T10:00:00.000Z" },
-      { start: "2026-07-01T12:00:00.000Z", end: "2026-07-01T17:00:00.000Z" },
+    expect(instants(slots)).toEqual([
+      { start: instant("2026-07-01T09:00:00Z"), end: instant("2026-07-01T10:00:00Z") },
+      { start: instant("2026-07-01T12:00:00Z"), end: instant("2026-07-01T17:00:00Z") },
     ]);
   });
 
@@ -140,8 +152,8 @@ describe("computeFreeSlots", () => {
       ],
       { startDate: "2026-07-01T09:00:00Z", endDate: "2026-07-01T12:00:00Z" }
     );
-    expect(slots).toEqual([
-      { start: "2026-07-01T11:00:00.000Z", end: "2026-07-01T12:00:00.000Z" },
+    expect(instants(slots)).toEqual([
+      { start: instant("2026-07-01T11:00:00Z"), end: instant("2026-07-01T12:00:00Z") },
     ]);
   });
 
@@ -155,8 +167,8 @@ describe("computeFreeSlots", () => {
       }
     );
     // Free gaps: [09:00,09:30] (30 min, kept) and [10:40,11:00] (20 min, dropped).
-    expect(slots).toEqual([
-      { start: "2026-07-01T09:00:00.000Z", end: "2026-07-01T09:30:00.000Z" },
+    expect(instants(slots)).toEqual([
+      { start: instant("2026-07-01T09:00:00Z"), end: instant("2026-07-01T09:30:00Z") },
     ]);
   });
 
@@ -167,8 +179,8 @@ describe("computeFreeSlots", () => {
       ],
       WINDOW
     );
-    expect(slots).toEqual([
-      { start: "2026-07-01T09:00:00.000Z", end: "2026-07-01T17:00:00.000Z" },
+    expect(instants(slots)).toEqual([
+      { start: instant("2026-07-01T09:00:00Z"), end: instant("2026-07-01T17:00:00Z") },
     ]);
   });
 
@@ -177,8 +189,8 @@ describe("computeFreeSlots", () => {
       [ev("2026-07-01T12:00:00Z", "2026-07-01T12:00:00Z")],
       WINDOW
     );
-    expect(slots).toEqual([
-      { start: "2026-07-01T09:00:00.000Z", end: "2026-07-01T17:00:00.000Z" },
+    expect(instants(slots)).toEqual([
+      { start: instant("2026-07-01T09:00:00Z"), end: instant("2026-07-01T17:00:00Z") },
     ]);
   });
 
@@ -192,8 +204,8 @@ describe("computeFreeSlots", () => {
       ],
       WINDOW
     );
-    expect(slots).toEqual([
-      { start: "2026-07-01T09:00:00.000Z", end: "2026-07-01T17:00:00.000Z" },
+    expect(instants(slots)).toEqual([
+      { start: instant("2026-07-01T09:00:00Z"), end: instant("2026-07-01T17:00:00Z") },
     ]);
   });
 
@@ -203,8 +215,8 @@ describe("computeFreeSlots", () => {
       [ev("2026-07-01T11:00:00Z", "2026-07-01T14:00:00Z")],
       { startDate: "2026-07-01T10:00:00Z", endDate: "2026-07-01T12:00:00Z" }
     );
-    expect(slots).toEqual([
-      { start: "2026-07-01T10:00:00.000Z", end: "2026-07-01T11:00:00.000Z" },
+    expect(instants(slots)).toEqual([
+      { start: instant("2026-07-01T10:00:00Z"), end: instant("2026-07-01T11:00:00Z") },
     ]);
   });
 
@@ -222,18 +234,18 @@ describe("computeFreeSlots", () => {
     // Filter by name (case-insensitive): only Work blocks; Personal is ignored,
     // so 12:00–13:00 stays free inside the 11:00–17:00 block.
     const byName = computeFreeSlots(events, { ...WINDOW, calendars: ["work"] });
-    expect(byName).toEqual([
-      { start: "2026-07-01T09:00:00.000Z", end: "2026-07-01T10:00:00.000Z" },
-      { start: "2026-07-01T11:00:00.000Z", end: "2026-07-01T17:00:00.000Z" },
+    expect(instants(byName)).toEqual([
+      { start: instant("2026-07-01T09:00:00Z"), end: instant("2026-07-01T10:00:00Z") },
+      { start: instant("2026-07-01T11:00:00Z"), end: instant("2026-07-01T17:00:00Z") },
     ]);
     // Filter by id: only Personal blocks.
     const byId = computeFreeSlots(events, {
       ...WINDOW,
       calendarIds: ["CAL-PERSONAL"],
     });
-    expect(byId).toEqual([
-      { start: "2026-07-01T09:00:00.000Z", end: "2026-07-01T12:00:00.000Z" },
-      { start: "2026-07-01T13:00:00.000Z", end: "2026-07-01T17:00:00.000Z" },
+    expect(instants(byId)).toEqual([
+      { start: instant("2026-07-01T09:00:00Z"), end: instant("2026-07-01T12:00:00Z") },
+      { start: instant("2026-07-01T13:00:00Z"), end: instant("2026-07-01T17:00:00Z") },
     ]);
   });
 
@@ -260,10 +272,10 @@ describe("computeFreeSlots", () => {
       calendarIds: ["CAL-PERSONAL"],
     });
     // Work (10–11) AND Personal (12–13) both block; Other (14–15) stays free.
-    expect(slots).toEqual([
-      { start: "2026-07-01T09:00:00.000Z", end: "2026-07-01T10:00:00.000Z" },
-      { start: "2026-07-01T11:00:00.000Z", end: "2026-07-01T12:00:00.000Z" },
-      { start: "2026-07-01T13:00:00.000Z", end: "2026-07-01T17:00:00.000Z" },
+    expect(instants(slots)).toEqual([
+      { start: instant("2026-07-01T09:00:00Z"), end: instant("2026-07-01T10:00:00Z") },
+      { start: instant("2026-07-01T11:00:00Z"), end: instant("2026-07-01T12:00:00Z") },
+      { start: instant("2026-07-01T13:00:00Z"), end: instant("2026-07-01T17:00:00Z") },
     ]);
   });
 
@@ -330,6 +342,31 @@ describe("computeFreeSlots", () => {
     expect(e.getUTCHours()).toBe(22);
   });
 
+  it("anchors working hours to the local clock across a spring-forward DST day", () => {
+    // 2026-03-08 (Sunday) is the America/New_York spring-forward day (23-hour
+    // local day; 02:00→03:00 does not exist). Working hours sit AFTER the gap, so
+    // they must land on EDT (UTC-4), not the pre-transition EST. This is the
+    // mirror of the fall-back test above, guarding BOTH DST directions.
+    const startDate = new Date(2026, 2, 8, 0, 0, 0, 0).toISOString(); // Mar 8 local 00:00
+    const endDate = new Date(2026, 2, 9, 0, 0, 0, 0).toISOString(); // Mar 9 local 00:00
+    const slots = computeFreeSlots([], {
+      startDate,
+      endDate,
+      workingHours: { start: "09:00", end: "17:00" },
+    });
+    expect(slots.length).toBe(1);
+    const s = new Date(slots[0].start);
+    const e = new Date(slots[0].end);
+    // Local clock: 09:00–17:00 on Mar 8.
+    expect(s.getHours()).toBe(9);
+    expect(e.getHours()).toBe(17);
+    expect(s.getDate()).toBe(8);
+    // EDT offset (UTC-4) after the spring-forward: local 09:00 → 13:00Z (not
+    // 14:00Z, which would be the pre-transition EST a fixed-offset bug would use).
+    expect(s.getUTCHours()).toBe(13);
+    expect(e.getUTCHours()).toBe(21);
+  });
+
   it("returns [] when the window start is not before the window end", () => {
     expect(
       computeFreeSlots([], {
@@ -337,5 +374,66 @@ describe("computeFreeSlots", () => {
         endDate: "2026-07-01T09:00:00Z",
       })
     ).toEqual([]);
+  });
+
+  it("emits slot timestamps with the server-local offset, not a UTC Z", () => {
+    // The suite pins TZ=America/New_York, which is EDT (UTC-04:00) on Jul 1.
+    // computeFreeSlots output therefore carries -04:00, mirroring the Swift
+    // bridge's local-offset formatISO8601 — never a bare `Z`. The instant is
+    // unchanged (asserted on the parsed value, above-style), and the format
+    // carries the local offset.
+    const [slot] = computeFreeSlots([], WINDOW);
+    expect(new Date(slot.start).getTime()).toBe(instant("2026-07-01T09:00:00Z"));
+    expect(new Date(slot.end).getTime()).toBe(instant("2026-07-01T17:00:00Z"));
+    expect(slot.start).toMatch(/-04:00$/);
+    expect(slot.end).toMatch(/-04:00$/);
+    expect(slot.start).not.toMatch(/Z$/);
+  });
+});
+
+describe("canonicalizeDateArg (find_free_slots window)", () => {
+  it("expands a date-only value to naive local midnight (matches the bridge, not UTC)", () => {
+    expect(canonicalizeDateArg("2026-07-01")).toBe("2026-07-01T00:00:00");
+    // The canonicalized form parses to LOCAL midnight — the same instant the
+    // bridge resolves a date-only value to — not UTC midnight. (Under the suite's
+    // America/New_York pin these differ by the offset.)
+    const canonical = new Date(canonicalizeDateArg("2026-07-01")).getTime();
+    const localMidnight = new Date(2026, 6, 1, 0, 0, 0, 0).getTime();
+    expect(canonical).toBe(localMidnight);
+    // Guard: the RAW date-only form is UTC midnight — the day-shift this fixes.
+    expect(new Date("2026-07-01").getTime()).not.toBe(localMidnight);
+  });
+
+  it("passes offset-bearing, naive, and HH:mm datetimes through unchanged", () => {
+    for (const s of [
+      "2026-07-01T09:00:00Z",
+      "2026-07-01T09:00:00+02:00",
+      "2026-07-01T09:00:00",
+      "2026-07-01T09:00:00.500",
+      "2026-07-01T09:00",
+    ]) {
+      expect(canonicalizeDateArg(s)).toBe(s);
+    }
+  });
+});
+
+describe("formatLocalISO", () => {
+  it("renders ±HH:MM for a non-zero offset and Z for a zero offset", () => {
+    const ms = Date.UTC(2026, 6, 1, 8, 0, 0); // 2026-07-01T08:00:00Z
+    // The +120 literal is the cross-language mirror: Swift's ModelsTests
+    // ("output matches the TS formatLocalISO shape byte-for-byte") asserts this
+    // exact string for the same instant, so the two formatters cannot diverge.
+    expect(formatLocalISO(ms, 120)).toBe("2026-07-01T10:00:00.000+02:00");
+    expect(formatLocalISO(ms, 0)).toBe("2026-07-01T08:00:00.000Z");
+    expect(formatLocalISO(ms, -240)).toBe("2026-07-01T04:00:00.000-04:00");
+  });
+
+  it("round-trips: a formatted instant reparses to the same instant", () => {
+    const ms = Date.UTC(2026, 6, 1, 8, 0, 0);
+    expect(new Date(formatLocalISO(ms, 120)).getTime()).toBe(ms);
+    expect(new Date(formatLocalISO(ms, 0)).getTime()).toBe(ms);
+    expect(new Date(formatLocalISO(ms, -240)).getTime()).toBe(ms);
+    // Default (host) offset path under the suite's TZ pin.
+    expect(new Date(formatLocalISO(ms)).getTime()).toBe(ms);
   });
 });

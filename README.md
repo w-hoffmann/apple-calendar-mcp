@@ -156,8 +156,8 @@ swift/.build/release/apple-bridge doctor
 **Recurring events not expanding**
 This is the exact problem this project solves. Ensure you're using the MCP tools (which use `predicateForEvents`) rather than AppleScript-based alternatives.
 
-**ISO 8601 parse error**
-The Swift binary expects dates in format `2026-02-07T10:00:00Z` or `2026-02-07T10:00:00.000Z`.
+**Dates and time zones**
+Date inputs are lenient: an explicit offset (`2026-02-07T10:00:00Z` or `…+02:00`) is honored exactly, a naive datetime (`2026-02-07T10:00:00`, with or without fractional seconds, or the minute-only `2026-02-07T10:00`) is read as **local** wall-clock time, and a date-only value (`2026-02-07`) is **local midnight**. Returned event timestamps carry the **local UTC offset** (e.g. `2026-02-07T10:00:00.000+01:00`; a `Z` suffix only when your timezone is UTC) — the instant is unchanged, so a value read from `get_events` can be passed straight back into `update_event`. The server assumes its timezone is yours (a local single-user Mac); a remote/hosted deployment would need a different approach.
 
 ## Contributing
 
